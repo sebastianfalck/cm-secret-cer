@@ -1,0 +1,175 @@
+pipeline {
+    agent any
+    environment {
+        NOMBRE = "${params.NOMBRE}"
+        AMBIENTE = "${params.AMBIENTE}"
+        RESOURCE_TYPE = "${params.RESOURCE_TYPE}"
+        NAMESPACE_KEY = "Namespace" + AMBIENTE.capitalize()
+        SERVER_INTERNAL = 'https://internal.openshift.example:6443'
+        SERVER_EXTERNAL = 'https://external.openshift.example:6443'
+        SERVER_DRS = 'https://drs.openshift.example:6443'
+    }
+    parameters {
+        string(name: 'NOMBRE', defaultValue: '', description: 'Nombre del microservicio a consultar en el CSV')
+        choice(name: 'AMBIENTE', choices: ['dev', 'uat', 'prd', 'drs'], description: 'Ambiente para determinar namespace y token')
+        choice(name: 'RESOURCE_TYPE', choices: ['configmap', 'secret', 'certificados'], description: 'Tipo de recurso a crear')
+        stashedFile 'FileCer.zip'
+    }
+    stages {
+        // ...existing code...
+        // ...
+        // ...
+        stage('Preparar contexto') {
+            steps {
+                script {
+                    // Utilidades y variables globales
+                    utils = load 'jenkinsVars.groovy'
+                    NAMESPACE = env[env.NAMESPACE_KEY]
+                    RESOURCE_TYPE = env.RESOURCE_TYPE.toLowerCase()
+                    NOMBRE = env.NOMBRE
+                    AMBIENTE = env.AMBIENTE
+                    TIPO_ACCESO = env.TIPO_ACCESO ?: 'internal'
+                    TOKEN = env.TOKEN
+                    FECHA = new Date().format('yyyyMMdd-HHmmss')
+                }
+            }
+        }
+        stage('Cargar variables del microservicio') {
+            steps {
+                script {
+                    def config = readFile('ProjectsJenkinsCardifCSV.csv')
+                        .readLines()
+                        .collect { it.split(';') }
+                    def headers = config[0]
+                    def row = config.find { it[0] == NOMBRE }
+                    if (!row) error "No se encontró el microservicio con nombre: ${NOMBRE}"
+                    headers.eachWithIndex { h, idx -> env["${h.trim()}"] = row[idx]?.trim() }
+                }
+            }
+        }
+        stage('Crear archivo datos.txt') {
+            steps {
+                script {
+                    writeFile file: 'datos.txt', text: RESOURCE_TYPE
+                }
+            }
+        }
+        stage('Mostrar datos.txt') {
+            steps {
+                script {
+                    echo "Contenido de datos.txt: ${readFile('datos.txt')}"
+                }
+            }
+        }
+        stage('Generar YAML') {
+            steps {
+                wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: TOKEN]]]) {
+                    script {
+                        def yamlFile = RESOURCE_TYPE == 'certificados' ? "${RESOURCE_TYPE}-${NOMBRE}-file.yaml" : "${RESOURCE_TYPE}-${NOMBRE}.yaml"
+                        def server = utils.getServer(AMBIENTE, TIPO_ACCESO, env)
+                        def ocLoginCmd = utils.getOcLoginCmd(server, TOKEN)
+                        sh ocLoginCmd
+                        def ocCmd = utils.getResourceCmd(RESOURCE_TYPE, NOMBRE, NAMESPACE, yamlFile)
+                        if (!ocCmd) error "Tipo de recurso no soportado: ${RESOURCE_TYPE}"
+                        echo "Ejecutando: ${ocCmd}"
+                        sh ocCmd
+                        def ocLogoutCmd = utils.getOcLogoutCmd()
+                        sh ocLogoutCmd
+                        echo "YAML generado: ${yamlFile}"
+                    }
+                }
+            }
+        }
+        stage('Backup recurso actual en OpenShift') {
+            steps {
+                wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: TOKEN]]]) {
+                    script {
+                        def backupFile = RESOURCE_TYPE == 'certificados' ? "tmp/${RESOURCE_TYPE}-${NOMBRE}-file-${FECHA}.yaml" : "tmp/${RESOURCE_TYPE}-${NOMBRE}-${FECHA}.yaml"
+                        def server = utils.getServer(AMBIENTE, TIPO_ACCESO, env)
+                        sh "mkdir -p tmp"
+                        def ocLoginCmd = utils.getOcLoginCmd(server, TOKEN)
+                        sh ocLoginCmd
+                        def ocGetCmd = utils.getBackupCmd(RESOURCE_TYPE, NOMBRE, NAMESPACE, backupFile)
+                        if (!ocGetCmd) error "Tipo de recurso no soportado: ${RESOURCE_TYPE}"
+                        echo "Realizando backup: ${ocGetCmd}"
+                        sh ocGetCmd
+                        def chmodCmd = utils.getChmodCmd(backupFile)
+                        sh chmodCmd
+                        def ocLogoutCmd = utils.getOcLogoutCmd()
+                        sh ocLogoutCmd
+                        echo "Backup guardado en: ${backupFile}"
+                    }
+                }
+            }
+        }
+        stage('Eliminar recurso existente si aplica') {
+            steps {
+                wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: TOKEN]]]) {
+                    script {
+                        def server = utils.getServer(AMBIENTE, TIPO_ACCESO, env)
+                        def ocLoginCmd = utils.getOcLoginCmd(server, TOKEN)
+                        sh ocLoginCmd
+                        def existsCmd = utils.resourceTypeMap[RESOURCE_TYPE]?.existsCmd?.call(NOMBRE, NAMESPACE)
+                        def deleteCmd = utils.resourceTypeMap[RESOURCE_TYPE]?.deleteCmd?.call(NOMBRE, NAMESPACE)
+                        if (existsCmd && deleteCmd) {
+                            def exists = sh(script: existsCmd, returnStatus: true)
+                            if (exists == 0) {
+                                echo "Recurso existente encontrado. Eliminando..."
+                                sh deleteCmd
+                            } else {
+                                echo "No existe recurso previo con ese nombre."
+                            }
+                        }
+                        def ocLogoutCmd = utils.getOcLogoutCmd()
+                        sh ocLogoutCmd
+                    }
+                }
+            }
+        }
+        stage('Modificación de deployment Yaml') {
+            steps {
+                wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: TOKEN]]]) {
+                    script {
+                        def server = utils.getServer(AMBIENTE, TIPO_ACCESO, env)
+                        def ocLoginCmd = utils.getOcLoginCmd(server, TOKEN)
+                        sh ocLoginCmd
+                        // Escalado simultáneo: 0 y luego 1 usando utilidades
+                        def scaleDownCmd = utils.getScaleCmd(NOMBRE, 0)
+                        def scaleUpCmd = utils.getScaleCmd(NOMBRE, 1)
+                        if (RESOURCE_TYPE != 'certificados') {
+                            // Eliminar variables de entorno relacionadas con RESOURCE_TYPE
+                            def cleanVarsCmd = utils.getCleanVarsCmd(NOMBRE, RESOURCE_TYPE)
+                            sh(script: cleanVarsCmd, label: 'Limpiando variables de entorno relacionadas')
+                            // Añadir variables desde el recurso correspondiente
+                            def setFromCmd = utils.getSetFromCmd(NOMBRE, RESOURCE_TYPE)
+                            sh(script: setFromCmd, label: 'Asignando variables desde el recurso')
+                        }
+                        // Ejecutar escalado a 0 y luego a 1
+                        sh(script: scaleDownCmd, label: 'Escalando deployment a 0 réplicas')
+                        sh(script: scaleUpCmd, label: 'Escalando deployment a 1 réplica')
+                        def ocLogoutCmd = utils.getOcLogoutCmd()
+                        sh ocLogoutCmd
+                    }
+                }
+            }
+        }
+        // --- ETAPA FINAL PERSONALIZADA ---
+        stage('Finalización del pipeline') {
+            steps {
+                script {
+                    echo "Pipeline finalizado exitosamente para el microservicio: ${env.NOMBRE} en el ambiente: ${env.AMBIENTE} y tipo de recurso: ${env.RESOURCE_TYPE}"
+                    // Escalado final a 0 y luego a 1 réplica usando utilidades
+                    def server = utils.getServer(AMBIENTE, TIPO_ACCESO, env)
+                    def ocLoginCmd = utils.getOcLoginCmd(server, TOKEN)
+                    sh ocLoginCmd
+                    def scaleDownCmd = utils.getScaleCmd(NOMBRE, 0)
+                    def scaleUpCmd = utils.getScaleCmd(NOMBRE, 1)
+                    sh(script: scaleDownCmd, label: 'Escalado final deployment a 0 réplicas')
+                    sh(script: scaleUpCmd, label: 'Escalado final deployment a 1 réplica')
+                    def ocLogoutCmd = utils.getOcLogoutCmd()
+                    sh ocLogoutCmd
+                }
+            }
+        }
+    }
+}
