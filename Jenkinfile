@@ -43,13 +43,21 @@ pipeline {
         stage('Cargar variables del microservicio') {
             steps {
                 script {
-                    def config = readFile('ProjectsJenkinsCardifCSV.csv')
+                    def config = readFile('project/ProjectsJenkinsCardifCSV.csv')
                         .readLines()
                         .collect { it.split(';') }
                     def headers = config[0]
                     def row = config.find { it[0] == NOMBRE }
                     if (!row) error "No se encontró el microservicio con nombre: ${NOMBRE}"
-                    headers.eachWithIndex { h, idx -> env["${h.trim()}"] = row[idx]?.trim() }
+                    headers.eachWithIndex { h, idx ->
+                        def key = h.trim()
+                        def value = row[idx]?.trim()
+                        env["${key}"] = value
+                        // Si la columna es 'usage', también exportar como TIPO_ACCESO
+                        if (key.equalsIgnoreCase('usage')) {
+                            env.TIPO_ACCESO = value
+                        }
+                    }
                 }
             }
         }
