@@ -1,6 +1,8 @@
 pipeline {
     agent any
     environment {
+        REPO_URL = ''
+        REPO_CREDENTIALS = 'github-credentials'
         NOMBRE = "${params.NOMBRE}"
         AMBIENTE = "${params.AMBIENTE}"
         RESOURCE_TYPE = "${params.RESOURCE_TYPE}"
@@ -16,9 +18,13 @@ pipeline {
         stashedFile 'FileCer.zip'
     }
     stages {
-        // ...existing code...
-        // ...
-        // ...
+        stage('Checkout Project') {
+            steps {
+                dir('project') {
+                    git branch: 'main', url: env.REPO_URL, credentialsId: env.REPO_CREDENTIALS
+                }
+            }
+        }
         stage('Preparar contexto') {
             steps {
                 script {
