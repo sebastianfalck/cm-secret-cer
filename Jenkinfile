@@ -6,7 +6,7 @@ pipeline {
         NOMBRE = "${params.NOMBRE}"
         AMBIENTE = "${params.AMBIENTE}"
         RESOURCE_TYPE = "${params.RESOURCE_TYPE}"
-        NAMESPACE_KEY = "Namespace" + AMBIENTE.capitalize()
+        // NAMESPACE_KEY eliminado, se calculará en script
         SERVER_INTERNAL = 'https://internal.openshift.example:6443'
         SERVER_EXTERNAL = 'https://external.openshift.example:6443'
         SERVER_DRS = 'https://drs.openshift.example:6443'
@@ -30,7 +30,8 @@ pipeline {
                 script {
                     // Utilidades y variables globales
                     utils = load 'jenkinsVars.groovy'
-                    NAMESPACE = env[env.NAMESPACE_KEY]
+                    def NAMESPACE_KEY = "Namespace" + env.AMBIENTE.capitalize()
+                    NAMESPACE = env[NAMESPACE_KEY]
                     RESOURCE_TYPE = env.RESOURCE_TYPE.toLowerCase()
                     NOMBRE = env.NOMBRE
                     AMBIENTE = env.AMBIENTE
