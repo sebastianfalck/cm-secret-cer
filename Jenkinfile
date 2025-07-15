@@ -15,7 +15,7 @@ pipeline {
         string(name: 'NOMBRE', defaultValue: '', description: 'Nombre del microservicio a consultar en el CSV')
         choice(name: 'AMBIENTE', choices: ['dev', 'uat', 'prd', 'drs'], description: 'Ambiente para determinar namespace y token')
         choice(name: 'RESOURCE_TYPE', choices: ['configmap', 'secret', 'certificados'], description: 'Tipo de recurso a crear')
-        string(name: 'KEY_VALUE_PAIRS', defaultValue: '', description: 'Contenido para datos.txt')
+        text(name: 'KEY_VALUE_PAIRS', defaultValue: '', description: 'Contenido para datos.txt')
         stashedFile 'FileCer.zip'
     }
     stages {
@@ -66,6 +66,9 @@ pipeline {
         stage('Crear archivo datos.txt') {
             steps {
                 script {
+                    if ((params.RESOURCE_TYPE == 'configmap' || params.RESOURCE_TYPE == 'secret') && !params.KEY_VALUE_PAIRS?.trim()) {
+                        error "KEY_VALUE_PAIRS no puede estar vacío para RESOURCE_TYPE = ${params.RESOURCE_TYPE}"
+                    }
                     writeFile file: 'datos.txt', text: params.KEY_VALUE_PAIRS
                 }
             }
