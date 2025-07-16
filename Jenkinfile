@@ -75,7 +75,8 @@ pipeline {
             steps {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
-                    def utils = new JenkinsUtils(this)
+                    def utilsScript = load 'JenkinsUtils.groovy'
+                    def utils = new utilsScript(this)
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
                         def yamlFile = env.RESOURCE_TYPE == 'certificados' ? "${env.RESOURCE_TYPE}-${env.NOMBRE}-file.yaml" : "${env.RESOURCE_TYPE}-${env.NOMBRE}.yaml"
                         def usageValue = fila.usage ?: 'internal'
@@ -94,7 +95,8 @@ pipeline {
             steps {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
-                    def utils = new JenkinsUtils(this)
+                    def utilsScript = load 'JenkinsUtils.groovy'
+                    def utils = new utilsScript(this)
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
                         def backupFile = env.RESOURCE_TYPE == 'certificados' ? "tmp/${env.RESOURCE_TYPE}-${env.NOMBRE}-file-${fila.FECHA}.yaml" : "tmp/${env.RESOURCE_TYPE}-${env.NOMBRE}-${fila.FECHA}.yaml"
                         def usageValue = fila.usage ?: 'internal'
@@ -116,7 +118,8 @@ pipeline {
             steps {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
-                    def utils = new JenkinsUtils(this)
+                    def utilsScript = load 'JenkinsUtils.groovy'
+                    def utils = new utilsScript(this)
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
                         def usageValue = fila.usage ?: 'internal'
                         def server = utils.getServer(env.AMBIENTE, usageValue)
@@ -141,7 +144,8 @@ pipeline {
             steps {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
-                    def utils = new JenkinsUtils(this)
+                    def utilsScript = load 'JenkinsUtils.groovy'
+                    def utils = new utilsScript(this)
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
                         def usageValue = fila.usage ?: 'internal'
                         def server = utils.getServer(env.AMBIENTE, usageValue)
@@ -165,7 +169,8 @@ pipeline {
             steps {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
-                    def utils = new JenkinsUtils(this)
+                    def utilsScript = load 'JenkinsUtils.groovy'
+                    def utils = new utilsScript(this)
                     echo "Pipeline finalizado exitosamente para el microservicio: ${fila.NOMBRE} en el ambiente: ${fila.AMBIENTE} y tipo de recurso: ${fila.RESOURCE_TYPE}"
                     def usageValue = fila.usage ?: 'internal'
                     def server = utils.getServer(env.AMBIENTE, usageValue)
