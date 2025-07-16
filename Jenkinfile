@@ -75,14 +75,13 @@ pipeline {
             steps {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
-                    def utilsScript = load 'jenkinsVars.groovy'
-                    def utils = new utilsScript(this)
+                    def utils = load 'jenkinsVars.groovy'
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
                         def yamlFile = env.RESOURCE_TYPE == 'certificados' ? "${env.RESOURCE_TYPE}-${env.NOMBRE}-file.yaml" : "${env.RESOURCE_TYPE}-${env.NOMBRE}.yaml"
                         def usageValue = fila.usage ?: 'internal'
                         def server = utils.getServer(env.AMBIENTE, usageValue)
                         sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
-                        def ocCmd = utils.getResourceCmd(env.RESOURCE_TYPE, env.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"] , yamlFile)
+                        def ocCmd = utils.getResourceCmd(env.RESOURCE_TYPE, env.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"], yamlFile)
                         echo "Ejecutando: ${ocCmd}"
                         sh ocCmd
                         sh utils.getOcLogoutCmd()
@@ -95,15 +94,14 @@ pipeline {
             steps {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
-                    def utilsScript = load 'jenkinsVars.groovy'
-                    def utils = new utilsScript(this)
+                    def utils = load 'jenkinsVars.groovy'
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
                         def backupFile = env.RESOURCE_TYPE == 'certificados' ? "tmp/${env.RESOURCE_TYPE}-${env.NOMBRE}-file-${fila.FECHA}.yaml" : "tmp/${env.RESOURCE_TYPE}-${env.NOMBRE}-${fila.FECHA}.yaml"
                         def usageValue = fila.usage ?: 'internal'
                         def server = utils.getServer(env.AMBIENTE, usageValue)
                         sh "mkdir -p tmp"
                         sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
-                        def ocGetCmd = utils.getBackupCmd(env.RESOURCE_TYPE, env.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"] , backupFile)
+                        def ocGetCmd = utils.getBackupCmd(env.RESOURCE_TYPE, env.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"], backupFile)
                         if (!ocGetCmd) error "Tipo de recurso no soportado: ${env.RESOURCE_TYPE}"
                         echo "Realizando backup: ${ocGetCmd}"
                         sh ocGetCmd
@@ -118,8 +116,7 @@ pipeline {
             steps {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
-                    def utilsScript = load 'jenkinsVars.groovy'
-                    def utils = new utilsScript(this)
+                    def utils = load 'jenkinsVars.groovy'
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
                         def usageValue = fila.usage ?: 'internal'
                         def server = utils.getServer(env.AMBIENTE, usageValue)
@@ -144,8 +141,7 @@ pipeline {
             steps {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
-                    def utilsScript = load 'jenkinsVars.groovy'
-                    def utils = new utilsScript(this)
+                    def utils = load 'jenkinsVars.groovy'
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
                         def usageValue = fila.usage ?: 'internal'
                         def server = utils.getServer(env.AMBIENTE, usageValue)
@@ -169,8 +165,7 @@ pipeline {
             steps {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
-                    def utilsScript = load 'jenkinsVars.groovy'
-                    def utils = new utilsScript(this)
+                    def utils = load 'jenkinsVars.groovy'
                     echo "Pipeline finalizado exitosamente para el microservicio: ${fila.NOMBRE} en el ambiente: ${fila.AMBIENTE} y tipo de recurso: ${fila.RESOURCE_TYPE}"
                     def usageValue = fila.usage ?: 'internal'
                     def server = utils.getServer(env.AMBIENTE, usageValue)
