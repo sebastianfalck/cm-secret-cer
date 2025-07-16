@@ -26,58 +26,47 @@ pipeline {
                 }
             }
         }
-        stage('Preparar contexto') {
-            steps {
-                script {
-                    // Utilidades y variables globales
-                    utils = load 'jenkinsVars.groovy'
-                    def NAMESPACE_KEY = "Namespace" + env.AMBIENTE.capitalize()
-                    NAMESPACE = env[NAMESPACE_KEY]
-                    RESOURCE_TYPE = env.RESOURCE_TYPE.toLowerCase()
-                    NOMBRE = env.NOMBRE
-                    AMBIENTE = env.AMBIENTE
-                    TIPO_ACCESO = env.TIPO_ACCESO ?: 'internal'
-                    TOKEN = env.TOKEN
-                    FECHA = new Date().format('yyyyMMdd-HHmmss')
-                }
-            }
-        }
         stage('Cargar variables del microservicio') {
             steps {
                 script {
-                    def configLines = readFile('project/ProjectsJenkinsCardifCSV.csv').readLines().findAll { it.trim() }
+                    def archivo_csv = 'project/ProjectsJenkinsCardifCSV.csv'
+                    def nombreProyecto = env.NOMBRE
+                    def configLines = readFile(archivo_csv).readLines().findAll { it.trim() }
+                    if (!configLines) error "El archivo CSV está vacío o no existe."
                     def headers = configLines[0].split(';').collect { it.trim() }
                     def appNameIdx = headers.findIndexOf { it.equalsIgnoreCase('appName') }
                     if (appNameIdx == -1) error "No se encontró la columna 'appName' en el CSV"
-                    def row = configLines.drop(1)
+                    def fila = configLines.drop(1)
                         .collect { line ->
-                            def values = line.split(';')
-                            // Limpiar cada valor como en el Python: strip y quitar corchetes []
-                            values.collect { v -> v.trim().replaceAll(/^\[|\]$/, '') }
+                            def valores = line.split(';')
+                            def fila_limpia = [:]
+                            headers.eachWithIndex { clave, idx ->
+                                fila_limpia[clave.trim()] = (valores.size() > idx ? valores[idx] : '').trim().replaceAll(/^\[|\]$/, '')
+                            }
+                            fila_limpia
                         }
-                        .find { (it[appNameIdx]?.trim() ?: '') == (NOMBRE?.trim() ?: '') }
-                    if (!row) {
-                        echo "DEBUG: Valor de NOMBRE recibido: '${NOMBRE}'"
-                        echo "DEBUG: appNameIdx: ${appNameIdx}"
-                        echo "DEBUG: appNames en CSV: " + configLines.drop(1).collect { it.split(';')[appNameIdx] }.join(', ')
-                        error "No se encontró el microservicio con appName: ${NOMBRE}"
+                        .find { it['appName'] == nombreProyecto }
+                    if (!fila) {
+                        error "No se encontró el microservicio con appName: ${nombreProyecto}"
                     }
-                    headers.eachWithIndex { h, idx ->
-                        def key = h.trim()
-                        def value = row[idx]?.trim()?.replaceAll(/^\[|\]$/, '')
-                        env["${key}"] = value
-                        if (key.equalsIgnoreCase('usage')) {
-                            env.TIPO_ACCESO = value
-                        }
+                    // Guardar la fila como JSON
+                    def jsonFila = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(fila))
+                    writeFile file: "fila_${nombreProyecto}.json", text: jsonFila
+                    // Cargar variables al entorno
+                    fila.each { k, v ->
+                        env["${k}"] = v
+                        if (k.equalsIgnoreCase('usage')) env.TIPO_ACCESO = v
                     }
+                    // Preparar contexto solo aquí
+                    utils = load 'jenkinsVars.groovy'
                 }
             }
         }
         stage('Crear archivo datos.txt') {
             steps {
                 script {
-                    if ((params.RESOURCE_TYPE == 'configmap' || params.RESOURCE_TYPE == 'secret') && !params.KEY_VALUE_PAIRS?.trim()) {
-                        error "KEY_VALUE_PAIRS no puede estar vacío para RESOURCE_TYPE = ${params.RESOURCE_TYPE}"
+                    if ((env.RESOURCE_TYPE == 'configmap' || env.RESOURCE_TYPE == 'secret') && !params.KEY_VALUE_PAIRS?.trim()) {
+                        error "KEY_VALUE_PAIRS no puede estar vacío para RESOURCE_TYPE = ${env.RESOURCE_TYPE}"
                     }
                     writeFile file: 'datos.txt', text: params.KEY_VALUE_PAIRS
                 }
@@ -92,13 +81,13 @@ pipeline {
         }
         stage('Generar YAML') {
             steps {
-                wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: TOKEN]]]) {
+                wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: env["Token${env.AMBIENTE.capitalize()}"]]]]) {
                     script {
-                        def yamlFile = RESOURCE_TYPE == 'certificados' ? "${RESOURCE_TYPE}-${NOMBRE}-file.yaml" : "${RESOURCE_TYPE}-${NOMBRE}.yaml"
-                        def server = utils.getServer(AMBIENTE, TIPO_ACCESO, env)
-                        def ocLoginCmd = utils.getOcLoginCmd(server, TOKEN)
+                        def yamlFile = env.RESOURCE_TYPE == 'certificados' ? "${env.RESOURCE_TYPE}-${env.NOMBRE}-file.yaml" : "${env.RESOURCE_TYPE}-${env.NOMBRE}.yaml"
+                        def server = utils.getServer(env.AMBIENTE, env.TIPO_ACCESO, env)
+                        def ocLoginCmd = utils.getOcLoginCmd(server, env["Token${env.AMBIENTE.capitalize()}"])
                         sh ocLoginCmd
-                        def ocCmd = utils.getResourceCmd(RESOURCE_TYPE, NOMBRE, NAMESPACE, yamlFile)
+                        def ocCmd = utils.getResourceCmd(env.RESOURCE_TYPE, env.NOMBRE, env["Namespace${env.AMBIENTE.capitalize()}"] , yamlFile)
                         echo "Ejecutando: ${ocCmd}"
                         sh ocCmd
                         def ocLogoutCmd = utils.getOcLogoutCmd()
@@ -110,15 +99,15 @@ pipeline {
         }
         stage('Backup recurso actual en OpenShift') {
             steps {
-                wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: TOKEN]]]) {
+                wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: env["Token${env.AMBIENTE.capitalize()}"]]]]) {
                     script {
-                        def backupFile = RESOURCE_TYPE == 'certificados' ? "tmp/${RESOURCE_TYPE}-${NOMBRE}-file-${FECHA}.yaml" : "tmp/${RESOURCE_TYPE}-${NOMBRE}-${FECHA}.yaml"
-                        def server = utils.getServer(AMBIENTE, TIPO_ACCESO, env)
+                        def backupFile = env.RESOURCE_TYPE == 'certificados' ? "tmp/${env.RESOURCE_TYPE}-${env.NOMBRE}-file-${env.FECHA}.yaml" : "tmp/${env.RESOURCE_TYPE}-${env.NOMBRE}-${env.FECHA}.yaml"
+                        def server = utils.getServer(env.AMBIENTE, env.TIPO_ACCESO, env)
                         sh "mkdir -p tmp"
-                        def ocLoginCmd = utils.getOcLoginCmd(server, TOKEN)
+                        def ocLoginCmd = utils.getOcLoginCmd(server, env["Token${env.AMBIENTE.capitalize()}"])
                         sh ocLoginCmd
-                        def ocGetCmd = utils.getBackupCmd(RESOURCE_TYPE, NOMBRE, NAMESPACE, backupFile)
-                        if (!ocGetCmd) error "Tipo de recurso no soportado: ${RESOURCE_TYPE}"
+                        def ocGetCmd = utils.getBackupCmd(env.RESOURCE_TYPE, env.NOMBRE, env["Namespace${env.AMBIENTE.capitalize()}"] , backupFile)
+                        if (!ocGetCmd) error "Tipo de recurso no soportado: ${env.RESOURCE_TYPE}"
                         echo "Realizando backup: ${ocGetCmd}"
                         sh ocGetCmd
                         def chmodCmd = utils.getChmodCmd(backupFile)
@@ -132,13 +121,13 @@ pipeline {
         }
         stage('Eliminar recurso existente si aplica') {
             steps {
-                wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: TOKEN]]]) {
+                wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: env["Token${env.AMBIENTE.capitalize()}"]]]]) {
                     script {
-                        def server = utils.getServer(AMBIENTE, TIPO_ACCESO, env)
-                        def ocLoginCmd = utils.getOcLoginCmd(server, TOKEN)
+                        def server = utils.getServer(env.AMBIENTE, env.TIPO_ACCESO, env)
+                        def ocLoginCmd = utils.getOcLoginCmd(server, env["Token${env.AMBIENTE.capitalize()}"])
                         sh ocLoginCmd
-                        def existsCmd = utils.resourceTypeMap[RESOURCE_TYPE]?.existsCmd?.call(NOMBRE, NAMESPACE)
-                        def deleteCmd = utils.resourceTypeMap[RESOURCE_TYPE]?.deleteCmd?.call(NOMBRE, NAMESPACE)
+                        def existsCmd = utils.resourceTypeMap[env.RESOURCE_TYPE]?.existsCmd?.call(env.NOMBRE, env["Namespace${env.AMBIENTE.capitalize()}"])
+                        def deleteCmd = utils.resourceTypeMap[env.RESOURCE_TYPE]?.deleteCmd?.call(env.NOMBRE, env["Namespace${env.AMBIENTE.capitalize()}"])
                         if (existsCmd && deleteCmd) {
                             def exists = sh(script: existsCmd, returnStatus: true)
                             if (exists == 0) {
@@ -156,20 +145,20 @@ pipeline {
         }
         stage('Modificación de deployment Yaml') {
             steps {
-                wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: TOKEN]]]) {
+                wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: env["Token${env.AMBIENTE.capitalize()}"]]]]) {
                     script {
-                        def server = utils.getServer(AMBIENTE, TIPO_ACCESO, env)
-                        def ocLoginCmd = utils.getOcLoginCmd(server, TOKEN)
+                        def server = utils.getServer(env.AMBIENTE, env.TIPO_ACCESO, env)
+                        def ocLoginCmd = utils.getOcLoginCmd(server, env["Token${env.AMBIENTE.capitalize()}"])
                         sh ocLoginCmd
                         // Escalado simultáneo: 0 y luego 1 usando utilidades
-                        def scaleDownCmd = utils.getScaleCmd(NOMBRE, 0)
-                        def scaleUpCmd = utils.getScaleCmd(NOMBRE, 1)
-                        if (RESOURCE_TYPE != 'certificados') {
+                        def scaleDownCmd = utils.getScaleCmd(env.NOMBRE, 0)
+                        def scaleUpCmd = utils.getScaleCmd(env.NOMBRE, 1)
+                        if (env.RESOURCE_TYPE != 'certificados') {
                             // Eliminar variables de entorno relacionadas con RESOURCE_TYPE
-                            def cleanVarsCmd = utils.getCleanVarsCmd(NOMBRE, RESOURCE_TYPE)
+                            def cleanVarsCmd = utils.getCleanVarsCmd(env.NOMBRE, env.RESOURCE_TYPE)
                             sh(script: cleanVarsCmd, label: 'Limpiando variables de entorno relacionadas')
                             // Añadir variables desde el recurso correspondiente
-                            def setFromCmd = utils.getSetFromCmd(NOMBRE, RESOURCE_TYPE)
+                            def setFromCmd = utils.getSetFromCmd(env.NOMBRE, env.RESOURCE_TYPE)
                             sh(script: setFromCmd, label: 'Asignando variables desde el recurso')
                         }
                         // Ejecutar escalado a 0 y luego a 1
@@ -181,17 +170,16 @@ pipeline {
                 }
             }
         }
-        // --- ETAPA FINAL PERSONALIZADA ---
         stage('Finalización del pipeline') {
             steps {
                 script {
                     echo "Pipeline finalizado exitosamente para el microservicio: ${env.NOMBRE} en el ambiente: ${env.AMBIENTE} y tipo de recurso: ${env.RESOURCE_TYPE}"
                     // Escalado final a 0 y luego a 1 réplica usando utilidades
-                    def server = utils.getServer(AMBIENTE, TIPO_ACCESO, env)
-                    def ocLoginCmd = utils.getOcLoginCmd(server, TOKEN)
+                    def server = utils.getServer(env.AMBIENTE, env.TIPO_ACCESO, env)
+                    def ocLoginCmd = utils.getOcLoginCmd(server, env["Token${env.AMBIENTE.capitalize()}"])
                     sh ocLoginCmd
-                    def scaleDownCmd = utils.getScaleCmd(NOMBRE, 0)
-                    def scaleUpCmd = utils.getScaleCmd(NOMBRE, 1)
+                    def scaleDownCmd = utils.getScaleCmd(env.NOMBRE, 0)
+                    def scaleUpCmd = utils.getScaleCmd(env.NOMBRE, 1)
                     sh(script: scaleDownCmd, label: 'Escalado final deployment a 0 réplicas')
                     sh(script: scaleUpCmd, label: 'Escalado final deployment a 1 réplica')
                     def ocLogoutCmd = utils.getOcLogoutCmd()
