@@ -6,7 +6,7 @@ def getOcLogoutCmd = { ->
 }
 // Comandos utilitarios para deployment
 def getCleanVarsCmd = { nombre, resourceType ->
-    return "oc set env deployment/${nombre} --list | grep ${resourceType} | awk '{print \\$2}' | while read VR; do oc set env deployment/${nombre} \"${'$'}VR-\" > /dev/null 2>&1; done"
+    return "oc set env deployment/${nombre} --list | grep ${resourceType} | awk '{print  $2}' | while read VR; do oc set env deployment/${nombre} $VR- > /dev/null 2>&1; done"
 }
 
 def getSetFromCmd = { nombre, resourceType ->
@@ -19,6 +19,8 @@ def getScaleCmd = { nombre, replicas ->
 def getOcLoginCmd(server, token) {
     return "oc login --insecure-skip-tls-verify --server=${server} --token=${token}"
 }
+def getResourceCmd(resourceType, nombre, namespace, yamlFile) {
+def getBackupCmd(resourceType, nombre, namespace, backupFile) {
 // Archivo de variables y utilidades para pipelines Jenkins
 
 def resourceTypeMap = [
