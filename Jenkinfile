@@ -81,7 +81,7 @@ pipeline {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
                         def yamlFile = env.RESOURCE_TYPE == 'certificados' ? "${env.RESOURCE_TYPE}-${env.NOMBRE}-file.yaml" : "${env.RESOURCE_TYPE}-${env.NOMBRE}.yaml"
-                        def server = utils.getServer(env.AMBIENTE, fila.usage)
+                        def server = this.getBinding().hasVariable('utils') ? utils.getServer(env.AMBIENTE, fila.usage) : load('jenkinsVars.groovy').getServer(env.AMBIENTE, fila.usage)
                         def ocLoginCmd = utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
                         sh ocLoginCmd
                         def ocCmd = utils.getResourceCmd(env.RESOURCE_TYPE, env.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"] , yamlFile)
@@ -100,7 +100,7 @@ pipeline {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
                         def backupFile = env.RESOURCE_TYPE == 'certificados' ? "tmp/${env.RESOURCE_TYPE}-${env.NOMBRE}-file-${fila.FECHA}.yaml" : "tmp/${env.RESOURCE_TYPE}-${env.NOMBRE}-${fila.FECHA}.yaml"
-                        def server = utils.getServer(env.AMBIENTE, fila.usage)
+                        def server = this.getBinding().hasVariable('utils') ? utils.getServer(env.AMBIENTE, fila.usage) : load('jenkinsVars.groovy').getServer(env.AMBIENTE, fila.usage)
                         sh "mkdir -p tmp"
                         def ocLoginCmd = utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
                         sh ocLoginCmd
@@ -122,7 +122,7 @@ pipeline {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
-                        def server = utils.getServer(env.AMBIENTE, fila.usage)
+                        def server = this.getBinding().hasVariable('utils') ? utils.getServer(env.AMBIENTE, fila.usage) : load('jenkinsVars.groovy').getServer(env.AMBIENTE, fila.usage)
                         def ocLoginCmd = utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
                         sh ocLoginCmd
                         def existsCmd = utils.resourceTypeMap[env.RESOURCE_TYPE]?.existsCmd?.call(env.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"])
@@ -147,7 +147,7 @@ pipeline {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
-                        def server = utils.getServer(env.AMBIENTE, fila.usage)
+                        def server = this.getBinding().hasVariable('utils') ? utils.getServer(env.AMBIENTE, fila.usage) : load('jenkinsVars.groovy').getServer(env.AMBIENTE, fila.usage)
                         def ocLoginCmd = utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
                         sh ocLoginCmd
                         // Escalado simultáneo: 0 y luego 1 usando utilidades
@@ -176,7 +176,7 @@ pipeline {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
                     echo "Pipeline finalizado exitosamente para el microservicio: ${fila.NOMBRE} en el ambiente: ${fila.AMBIENTE} y tipo de recurso: ${fila.RESOURCE_TYPE}"
                     // Escalado final a 0 y luego a 1 réplica usando utilidades
-                    def server = utils.getServer(env.AMBIENTE, fila.usage)
+                    def server = this.getBinding().hasVariable('utils') ? utils.getServer(env.AMBIENTE, fila.usage) : load('jenkinsVars.groovy').getServer(env.AMBIENTE, fila.usage)
                     def ocLoginCmd = utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
                     sh ocLoginCmd
                     def scaleDownCmd = utils.getScaleCmd(env.NOMBRE, 0)
