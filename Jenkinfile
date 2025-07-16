@@ -81,7 +81,7 @@ pipeline {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
                         def yamlFile = fila.RESOURCE_TYPE == 'certificados' ? "${fila.RESOURCE_TYPE}-${fila.NOMBRE}-file.yaml" : "${fila.RESOURCE_TYPE}-${fila.NOMBRE}.yaml"
-                        def server = utils.getServer(fila.AMBIENTE, fila.TIPO_ACCESO, fila)
+                        def server = utils.getServer(fila.AMBIENTE, fila.TIPO_ACCESO, env)
                         def ocLoginCmd = utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
                         sh ocLoginCmd
                         def ocCmd = utils.getResourceCmd(fila.RESOURCE_TYPE, fila.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"] , yamlFile)
@@ -100,7 +100,7 @@ pipeline {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
                         def backupFile = fila.RESOURCE_TYPE == 'certificados' ? "tmp/${fila.RESOURCE_TYPE}-${fila.NOMBRE}-file-${fila.FECHA}.yaml" : "tmp/${fila.RESOURCE_TYPE}-${fila.NOMBRE}-${fila.FECHA}.yaml"
-                        def server = utils.getServer(fila.AMBIENTE, fila.TIPO_ACCESO, fila)
+                        def server = utils.getServer(fila.AMBIENTE, fila.TIPO_ACCESO, env)
                         sh "mkdir -p tmp"
                         def ocLoginCmd = utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
                         sh ocLoginCmd
@@ -122,7 +122,7 @@ pipeline {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
-                        def server = utils.getServer(fila.AMBIENTE, fila.TIPO_ACCESO, fila)
+                        def server = utils.getServer(fila.AMBIENTE, fila.TIPO_ACCESO, env)
                         def ocLoginCmd = utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
                         sh ocLoginCmd
                         def existsCmd = utils.resourceTypeMap[fila.RESOURCE_TYPE]?.existsCmd?.call(fila.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"])
@@ -147,7 +147,7 @@ pipeline {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
-                        def server = utils.getServer(fila.AMBIENTE, fila.TIPO_ACCESO, fila)
+                        def server = utils.getServer(fila.AMBIENTE, fila.TIPO_ACCESO, env)
                         def ocLoginCmd = utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
                         sh ocLoginCmd
                         // Escalado simultáneo: 0 y luego 1 usando utilidades
@@ -176,7 +176,7 @@ pipeline {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
                     echo "Pipeline finalizado exitosamente para el microservicio: ${fila.NOMBRE} en el ambiente: ${fila.AMBIENTE} y tipo de recurso: ${fila.RESOURCE_TYPE}"
                     // Escalado final a 0 y luego a 1 réplica usando utilidades
-                    def server = utils.getServer(fila.AMBIENTE, fila.TIPO_ACCESO, fila)
+                    def server = utils.getServer(fila.AMBIENTE, fila.TIPO_ACCESO, env)
                     def ocLoginCmd = utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
                     sh ocLoginCmd
                     def scaleDownCmd = utils.getScaleCmd(fila.NOMBRE, 0)
