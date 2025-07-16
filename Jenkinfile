@@ -51,8 +51,17 @@ pipeline {
                     def headers = config[0]
                     def appNameIdx = headers.findIndexOf { it.trim().equalsIgnoreCase('appName') }
                     if (appNameIdx == -1) error "No se encontró la columna 'appName' en el CSV"
-                    def row = config.find { it[appNameIdx]?.trim() == NOMBRE }
-                    if (!row) error "No se encontró el microservicio con appName: ${NOMBRE}"
+                    def row = config.find {
+                        def csvName = it[appNameIdx]?.trim()?.toLowerCase()
+                        def paramName = NOMBRE?.trim()?.toLowerCase()
+                        csvName == paramName
+                    }
+                    if (!row) {
+                        echo "DEBUG: Valor de NOMBRE recibido: '${NOMBRE}'"
+                        echo "DEBUG: appNameIdx: ${appNameIdx}"
+                        echo "DEBUG: appNames en CSV: " + config.collect { it[appNameIdx] }.join(', ')
+                        error "No se encontró el microservicio con appName: ${NOMBRE}"
+                    }
                     headers.eachWithIndex { h, idx ->
                         def key = h.trim()
                         def value = row[idx]?.trim()
