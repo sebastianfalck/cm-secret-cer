@@ -6,7 +6,6 @@ pipeline {
         NOMBRE = "${params.NOMBRE}"
         AMBIENTE = "${params.AMBIENTE}"
         RESOURCE_TYPE = "${params.RESOURCE_TYPE}"
-        // NAMESPACE_KEY eliminado, se calculará en script
         SERVER_INTERNAL = 'https://internal.openshift.example:6443'
         SERVER_EXTERNAL = 'https://external.openshift.example:6443'
         SERVER_DRS = 'https://drs.openshift.example:6443'
@@ -41,7 +40,7 @@ pipeline {
                             def valores = line.split(';')
                             def fila_limpia = [:]
                             headers.eachWithIndex { clave, idx ->
-                                fila_limpia[clave.trim()] = (valores.size() > idx ? valores[idx] : '').trim().replaceAll(/^\[|\]$/, '')
+                                fila_limpia[clave.trim()] = (valores.size() > idx ? valores[idx] : '').trim().replaceAll(/^[\[]|[\]]\$/, '')
                             }
                             fila_limpia
                         }
@@ -49,10 +48,8 @@ pipeline {
                     if (!fila) {
                         error "No se encontró el microservicio con appName: ${nombreProyecto}"
                     }
-                    // Guardar la fila como JSON para los siguientes stages
                     def jsonFila = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(fila))
                     writeFile file: "fila_${nombreProyecto}.json", text: jsonFila
-                    // No cargar utils aquí, siempre cargarlo localmente en cada stage
                 }
             }
         }
@@ -78,18 +75,16 @@ pipeline {
             steps {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
+                    def utils = new JenkinsUtils(this)
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
-                        def utils = load 'jenkinsVars.groovy'
                         def yamlFile = env.RESOURCE_TYPE == 'certificados' ? "${env.RESOURCE_TYPE}-${env.NOMBRE}-file.yaml" : "${env.RESOURCE_TYPE}-${env.NOMBRE}.yaml"
                         def usageValue = fila.usage ?: 'internal'
                         def server = utils.getServer(env.AMBIENTE, usageValue)
-                        def ocLoginCmd = utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
-                        sh ocLoginCmd
+                        sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
                         def ocCmd = utils.getResourceCmd(env.RESOURCE_TYPE, env.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"] , yamlFile)
                         echo "Ejecutando: ${ocCmd}"
                         sh ocCmd
-                        def ocLogoutCmd = utils.getOcLogoutCmd()
-                        sh ocLogoutCmd
+                        sh utils.getOcLogoutCmd()
                         echo "YAML generado: ${yamlFile}"
                     }
                 }
@@ -99,22 +94,19 @@ pipeline {
             steps {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
+                    def utils = new JenkinsUtils(this)
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
-                        def utils = load 'jenkinsVars.groovy'
                         def backupFile = env.RESOURCE_TYPE == 'certificados' ? "tmp/${env.RESOURCE_TYPE}-${env.NOMBRE}-file-${fila.FECHA}.yaml" : "tmp/${env.RESOURCE_TYPE}-${env.NOMBRE}-${fila.FECHA}.yaml"
                         def usageValue = fila.usage ?: 'internal'
                         def server = utils.getServer(env.AMBIENTE, usageValue)
                         sh "mkdir -p tmp"
-                        def ocLoginCmd = utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
-                        sh ocLoginCmd
+                        sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
                         def ocGetCmd = utils.getBackupCmd(env.RESOURCE_TYPE, env.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"] , backupFile)
                         if (!ocGetCmd) error "Tipo de recurso no soportado: ${env.RESOURCE_TYPE}"
                         echo "Realizando backup: ${ocGetCmd}"
                         sh ocGetCmd
-                        def chmodCmd = utils.getChmodCmd(backupFile)
-                        sh chmodCmd
-                        def ocLogoutCmd = utils.getOcLogoutCmd()
-                        sh ocLogoutCmd
+                        sh utils.getChmodCmd(backupFile)
+                        sh utils.getOcLogoutCmd()
                         echo "Backup guardado en: ${backupFile}"
                     }
                 }
@@ -124,14 +116,13 @@ pipeline {
             steps {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
+                    def utils = new JenkinsUtils(this)
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
-                        def utils = load 'jenkinsVars.groovy'
                         def usageValue = fila.usage ?: 'internal'
                         def server = utils.getServer(env.AMBIENTE, usageValue)
-                        def ocLoginCmd = utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
-                        sh ocLoginCmd
-                        def existsCmd = utils.resourceTypeMap[env.RESOURCE_TYPE]?.existsCmd?.call(env.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"])
-                        def deleteCmd = utils.resourceTypeMap[env.RESOURCE_TYPE]?.deleteCmd?.call(env.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"])
+                        sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
+                        def existsCmd = utils.existsCmd(env.RESOURCE_TYPE, env.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"])
+                        def deleteCmd = utils.deleteCmd(env.RESOURCE_TYPE, env.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"])
                         if (existsCmd && deleteCmd) {
                             def exists = sh(script: existsCmd, returnStatus: true)
                             if (exists == 0) {
@@ -141,8 +132,7 @@ pipeline {
                                 echo "No existe recurso previo con ese nombre."
                             }
                         }
-                        def ocLogoutCmd = utils.getOcLogoutCmd()
-                        sh ocLogoutCmd
+                        sh utils.getOcLogoutCmd()
                     }
                 }
             }
@@ -151,28 +141,22 @@ pipeline {
             steps {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
+                    def utils = new JenkinsUtils(this)
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
-                        def utils = load 'jenkinsVars.groovy'
                         def usageValue = fila.usage ?: 'internal'
                         def server = utils.getServer(env.AMBIENTE, usageValue)
-                        def ocLoginCmd = utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
-                        sh ocLoginCmd
-                        // Escalado simultáneo: 0 y luego 1 usando utilidades
+                        sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
                         def scaleDownCmd = utils.getScaleCmd(env.NOMBRE, 0)
                         def scaleUpCmd = utils.getScaleCmd(env.NOMBRE, 1)
                         if (env.RESOURCE_TYPE != 'certificados') {
-                            // Eliminar variables de entorno relacionadas con RESOURCE_TYPE
                             def cleanVarsCmd = utils.getCleanVarsCmd(env.NOMBRE, env.RESOURCE_TYPE)
                             sh(script: cleanVarsCmd, label: 'Limpiando variables de entorno relacionadas')
-                            // Añadir variables desde el recurso correspondiente
                             def setFromCmd = utils.getSetFromCmd(env.NOMBRE, env.RESOURCE_TYPE)
                             sh(script: setFromCmd, label: 'Asignando variables desde el recurso')
                         }
-                        // Ejecutar escalado a 0 y luego a 1
                         sh(script: scaleDownCmd, label: 'Escalando deployment a 0 réplicas')
                         sh(script: scaleUpCmd, label: 'Escalando deployment a 1 réplica')
-                        def ocLogoutCmd = utils.getOcLogoutCmd()
-                        sh ocLogoutCmd
+                        sh utils.getOcLogoutCmd()
                     }
                 }
             }
@@ -181,19 +165,16 @@ pipeline {
             steps {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
+                    def utils = new JenkinsUtils(this)
                     echo "Pipeline finalizado exitosamente para el microservicio: ${fila.NOMBRE} en el ambiente: ${fila.AMBIENTE} y tipo de recurso: ${fila.RESOURCE_TYPE}"
-                    // Escalado final a 0 y luego a 1 réplica usando utilidades
-                    def utils = load 'jenkinsVars.groovy'
                     def usageValue = fila.usage ?: 'internal'
                     def server = utils.getServer(env.AMBIENTE, usageValue)
-                    def ocLoginCmd = utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
-                    sh ocLoginCmd
+                    sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
                     def scaleDownCmd = utils.getScaleCmd(env.NOMBRE, 0)
                     def scaleUpCmd = utils.getScaleCmd(env.NOMBRE, 1)
                     sh(script: scaleDownCmd, label: 'Escalado final deployment a 0 réplicas')
                     sh(script: scaleUpCmd, label: 'Escalado final deployment a 1 réplica')
-                    def ocLogoutCmd = utils.getOcLogoutCmd()
-                    sh ocLogoutCmd
+                    sh utils.getOcLogoutCmd()
                 }
             }
         }
