@@ -119,8 +119,14 @@ pipeline {
     stages {
         stage('Checkout Project') {
             steps {
-                dir('project') {
-                    git branch: 'main', url: env.REPO_URL, credentialsId: env.REPO_CREDENTIALS
+                script {
+                    try {
+                        dir('project') {
+                            git branch: 'main', url: env.REPO_URL, credentialsId: env.REPO_CREDENTIALS
+                        }
+                    } catch (e) {
+                        error("Fallo en 'Checkout Project': ${e.message}")
+                    }
                 }
             }
         }
@@ -128,24 +134,26 @@ pipeline {
         stage('Cargar variables del microservicio') {
             steps {
                 script {
-                    def archivo_csv = 'project/ProjectsJenkinsCardifCSV.csv'
-                    def configLines = readFile(archivo_csv).readLines().findAll { it.trim() }
-                    if (!configLines) error "El archivo CSV está vacío o no existe."
-                    def headers = configLines[0].split(';').collect { it.trim() }
-                    def appNameIdx = headers.findIndexOf { it.equalsIgnoreCase('appName') }
-                    if (appNameIdx == -1) error "No se encontró la columna 'appName' en el CSV"
-                    def fila = configLines.drop(1)
-                        .collect { line ->
+                    try {
+                        def archivo_csv = 'project/ProjectsJenkinsCardifCSV.csv'
+                        def configLines = readFile(archivo_csv).readLines().findAll { it.trim() }
+                        if (!configLines) error "El archivo CSV está vacío o no existe."
+                        def headers = configLines[0].split(';').collect { it.trim() }
+                        def appNameIdx = headers.findIndexOf { it.equalsIgnoreCase('appName') }
+                        if (appNameIdx == -1) error "No se encontró la columna 'appName' en el CSV"
+                        def fila = configLines.drop(1).collect { line ->
                             def valores = line.split(';')
                             def fila_limpia = [:]
                             headers.eachWithIndex { clave, idx ->
                                 fila_limpia[clave.trim()] = (valores.size() > idx ? valores[idx] : '').trim().replaceAll(/^[\[]|[\]]\$/, '')
                             }
                             fila_limpia
-                        }
-                        .find { it['appName'] == env.NOMBRE }
-                    if (!fila) error "No se encontró el microservicio con appName: ${env.NOMBRE}"
-                    writeFile file: "fila_${env.NOMBRE}.json", text: groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(fila))
+                        }.find { it['appName'] == env.NOMBRE }
+                        if (!fila) error "No se encontró el microservicio con appName: ${env.NOMBRE}"
+                        writeFile file: "fila_${env.NOMBRE}.json", text: groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(fila))
+                    } catch (e) {
+                        error("Fallo al cargar variables del microservicio: ${e.message}")
+                    }
                 }
             }
         }
@@ -153,11 +161,15 @@ pipeline {
         stage('Crear archivo datos.txt') {
             steps {
                 script {
-                    def fila = readJSON file: "fila_${env.NOMBRE}.json"
-                    if ((fila.RESOURCE_TYPE == 'configmap' || fila.RESOURCE_TYPE == 'secret') && !params.KEY_VALUE_PAIRS?.trim()) {
-                        error "KEY_VALUE_PAIRS no puede estar vacío para RESOURCE_TYPE = ${fila.RESOURCE_TYPE}"
+                    try {
+                        def fila = readJSON file: "fila_${env.NOMBRE}.json"
+                        if ((fila.RESOURCE_TYPE == 'configmap' || fila.RESOURCE_TYPE == 'secret') && !params.KEY_VALUE_PAIRS?.trim()) {
+                            error "KEY_VALUE_PAIRS no puede estar vacío para RESOURCE_TYPE = ${fila.RESOURCE_TYPE}"
+                        }
+                        writeFile file: 'datos.txt', text: params.KEY_VALUE_PAIRS
+                    } catch (e) {
+                        error("Fallo en la creación del archivo datos.txt: ${e.message}")
                     }
-                    writeFile file: 'datos.txt', text: params.KEY_VALUE_PAIRS
                 }
             }
         }
@@ -165,33 +177,40 @@ pipeline {
         stage('Generar YAML') {
             steps {
                 script {
-                    def fila = readJSON file: "fila_${env.NOMBRE}.json"
-                    def utils = new JenkinsUtils(this)
-                    wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
-                        def yamlFile = env.RESOURCE_TYPE == 'certificados' ? "${env.RESOURCE_TYPE}-${env.NOMBRE}-file.yaml" : "${env.RESOURCE_TYPE}-${env.NOMBRE}.yaml"
-                        def server = utils.getServer(env.AMBIENTE, fila.usage ?: 'internal')
-                        sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
-                        sh utils.getResourceCmd(env.RESOURCE_TYPE, env.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"], yamlFile)
-                        sh utils.getOcLogoutCmd()
+                    try {
+                        def fila = readJSON file: "fila_${env.NOMBRE}.json"
+                        def utils = new JenkinsUtils(this)
+                        wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
+                            def yamlFile = env.RESOURCE_TYPE == 'certificados' ? "${env.RESOURCE_TYPE}-${env.NOMBRE}-file.yaml" : "${env.RESOURCE_TYPE}-${env.NOMBRE}.yaml"
+                            def server = utils.getServer(env.AMBIENTE, fila.usage ?: 'internal')
+                            sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
+                            sh utils.getResourceCmd(env.RESOURCE_TYPE, env.NOMBRE, fila["NameSpace${env.AMBIENTE.capitalize()}"], yamlFile)
+                            sh utils.getOcLogoutCmd()
+                        }
+                    } catch (e) {
+                        error("Fallo al generar YAML: ${e.message}")
                     }
                 }
             }
         }
 
-        // Backup, Delete, Apply
         stage('Backup recurso actual en OpenShift') {
             steps {
                 script {
-                    def fila = readJSON file: "fila_${env.NOMBRE}.json"
-                    def utils = new JenkinsUtils(this)
-                    wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
-                        def backupFile = env.RESOURCE_TYPE == 'certificados' ? "tmp/${env.RESOURCE_TYPE}-${env.NOMBRE}-file-${fila.FECHA}.yaml" : "tmp/${env.RESOURCE_TYPE}-${env.NOMBRE}-${fila.FECHA}.yaml"
-                        def server = utils.getServer(env.AMBIENTE, fila.usage ?: 'internal')
-                        sh "mkdir -p tmp"
-                        sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
-                        sh utils.getBackupCmd(env.RESOURCE_TYPE, env.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"], backupFile)
-                        sh utils.getChmodCmd(backupFile)
-                        sh utils.getOcLogoutCmd()
+                    try {
+                        def fila = readJSON file: "fila_${env.NOMBRE}.json"
+                        def utils = new JenkinsUtils(this)
+                        wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
+                            def backupFile = env.RESOURCE_TYPE == 'certificados' ? "tmp/${env.RESOURCE_TYPE}-${env.NOMBRE}-file-${fila.FECHA}.yaml" : "tmp/${env.RESOURCE_TYPE}-${env.NOMBRE}-${fila.FECHA}.yaml"
+                            def server = utils.getServer(env.AMBIENTE, fila.usage ?: 'internal')
+                            sh "mkdir -p tmp"
+                            sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
+                            sh utils.getBackupCmd(env.RESOURCE_TYPE, env.NOMBRE, fila["NameSpace${env.AMBIENTE.capitalize()}"], backupFile)
+                            sh utils.getChmodCmd(backupFile)
+                            sh utils.getOcLogoutCmd()
+                        }
+                    } catch (e) {
+                        error("Fallo al realizar backup del recurso: ${e.message}")
                     }
                 }
             }
@@ -200,17 +219,19 @@ pipeline {
         stage('Eliminar recurso existente si aplica') {
             steps {
                 script {
-                    def fila = readJSON file: "fila_${env.NOMBRE}.json"
-                    def utils = new JenkinsUtils(this)
-                    wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
-                        def server = utils.getServer(env.AMBIENTE, fila.usage ?: 'internal')
-                        sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
-                        if (utils.existsCmd(env.RESOURCE_TYPE, env.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"])) {
+                    try {
+                        def fila = readJSON file: "fila_${env.NOMBRE}.json"
+                        def utils = new JenkinsUtils(this)
+                        wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
+                            def server = utils.getServer(env.AMBIENTE, fila.usage ?: 'internal')
+                            sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
                             if (sh(script: utils.existsCmd(env.RESOURCE_TYPE, env.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"]), returnStatus: true) == 0) {
-                                sh utils.deleteCmd(env.RESOURCE_TYPE, env.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"])
+                                sh utils.deleteCmd(env.RESOURCE_TYPE, env.NOMBRE, fila["NameSpace${env.AMBIENTE.capitalize()}"])
                             }
+                            sh utils.getOcLogoutCmd()
                         }
-                        sh utils.getOcLogoutCmd()
+                    } catch (e) {
+                        error("Fallo al eliminar recurso existente: ${e.message}")
                     }
                 }
             }
@@ -219,18 +240,41 @@ pipeline {
         stage('Modificación de deployment') {
             steps {
                 script {
-                    def fila = readJSON file: "fila_${env.NOMBRE}.json"
-                    def utils = new JenkinsUtils(this)
-                    wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
+                    try {
+                        def fila = readJSON file: "fila_${env.NOMBRE}.json"
+                        def utils = new JenkinsUtils(this)
+                        wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
+                            def server = utils.getServer(env.AMBIENTE, fila.usage ?: 'internal')
+                            sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
+                            sh utils.getScaleCmd(env.NOMBRE, 0)
+                            if (env.RESOURCE_TYPE != 'certificados') {
+                                sh utils.getCleanVarsCmd(env.NOMBRE, env.RESOURCE_TYPE)
+                                sh utils.getSetFromCmd(env.NOMBRE, env.RESOURCE_TYPE)
+                            }
+                            sh utils.getScaleCmd(env.NOMBRE, 1)
+                            sh utils.getOcLogoutCmd()
+                        }
+                    } catch (e) {
+                        error("Fallo al modificar deployment: ${e.message}")
+                    }
+                }
+            }
+        }
+
+        stage('Finalización del pipeline') {
+            steps {
+                script {
+                    try {
+                        def fila = readJSON file: "fila_${env.NOMBRE}.json"
+                        def utils = new JenkinsUtils(this)
                         def server = utils.getServer(env.AMBIENTE, fila.usage ?: 'internal')
+                        echo "Pipeline finalizado exitosamente para: ${fila.NOMBRE} - ${fila.AMBIENTE} - ${fila.RESOURCE_TYPE}"
                         sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
                         sh utils.getScaleCmd(env.NOMBRE, 0)
-                        if (env.RESOURCE_TYPE != 'certificados') {
-                            sh utils.getCleanVarsCmd(env.NOMBRE, env.RESOURCE_TYPE)
-                            sh utils.getSetFromCmd(env.NOMBRE, env.RESOURCE_TYPE)
-                        }
                         sh utils.getScaleCmd(env.NOMBRE, 1)
                         sh utils.getOcLogoutCmd()
+                    } catch (e) {
+                        error("Fallo en la finalización del pipeline: ${e.message}")
                     }
                 }
             }
