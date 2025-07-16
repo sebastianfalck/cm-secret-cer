@@ -80,11 +80,11 @@ pipeline {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
-                        def yamlFile = fila.RESOURCE_TYPE == 'certificados' ? "${fila.RESOURCE_TYPE}-${fila.NOMBRE}-file.yaml" : "${fila.RESOURCE_TYPE}-${fila.NOMBRE}.yaml"
+                        def yamlFile = env.RESOURCE_TYPE == 'certificados' ? "${env.RESOURCE_TYPE}-${env.NOMBRE}-file.yaml" : "${env.RESOURCE_TYPE}-${env.NOMBRE}.yaml"
                         def server = utils.getServer(env.AMBIENTE, fila.usage)
                         def ocLoginCmd = utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
                         sh ocLoginCmd
-                        def ocCmd = utils.getResourceCmd(fila.RESOURCE_TYPE, fila.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"] , yamlFile)
+                        def ocCmd = utils.getResourceCmd(env.RESOURCE_TYPE, env.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"] , yamlFile)
                         echo "Ejecutando: ${ocCmd}"
                         sh ocCmd
                         def ocLogoutCmd = utils.getOcLogoutCmd()
@@ -99,13 +99,13 @@ pipeline {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
-                        def backupFile = fila.RESOURCE_TYPE == 'certificados' ? "tmp/${fila.RESOURCE_TYPE}-${fila.NOMBRE}-file-${fila.FECHA}.yaml" : "tmp/${fila.RESOURCE_TYPE}-${fila.NOMBRE}-${fila.FECHA}.yaml"
+                        def backupFile = env.RESOURCE_TYPE == 'certificados' ? "tmp/${env.RESOURCE_TYPE}-${env.NOMBRE}-file-${fila.FECHA}.yaml" : "tmp/${env.RESOURCE_TYPE}-${env.NOMBRE}-${fila.FECHA}.yaml"
                         def server = utils.getServer(env.AMBIENTE, fila.usage)
                         sh "mkdir -p tmp"
                         def ocLoginCmd = utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
                         sh ocLoginCmd
-                        def ocGetCmd = utils.getBackupCmd(fila.RESOURCE_TYPE, fila.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"] , backupFile)
-                        if (!ocGetCmd) error "Tipo de recurso no soportado: ${fila.RESOURCE_TYPE}"
+                        def ocGetCmd = utils.getBackupCmd(env.RESOURCE_TYPE, env.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"] , backupFile)
+                        if (!ocGetCmd) error "Tipo de recurso no soportado: ${env.RESOURCE_TYPE}"
                         echo "Realizando backup: ${ocGetCmd}"
                         sh ocGetCmd
                         def chmodCmd = utils.getChmodCmd(backupFile)
@@ -125,8 +125,8 @@ pipeline {
                         def server = utils.getServer(env.AMBIENTE, fila.usage)
                         def ocLoginCmd = utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
                         sh ocLoginCmd
-                        def existsCmd = utils.resourceTypeMap[fila.RESOURCE_TYPE]?.existsCmd?.call(fila.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"])
-                        def deleteCmd = utils.resourceTypeMap[fila.RESOURCE_TYPE]?.deleteCmd?.call(fila.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"])
+                        def existsCmd = utils.resourceTypeMap[env.RESOURCE_TYPE]?.existsCmd?.call(env.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"])
+                        def deleteCmd = utils.resourceTypeMap[env.RESOURCE_TYPE]?.deleteCmd?.call(env.NOMBRE, fila["Namespace${env.AMBIENTE.capitalize()}"])
                         if (existsCmd && deleteCmd) {
                             def exists = sh(script: existsCmd, returnStatus: true)
                             if (exists == 0) {
@@ -151,14 +151,14 @@ pipeline {
                         def ocLoginCmd = utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
                         sh ocLoginCmd
                         // Escalado simultáneo: 0 y luego 1 usando utilidades
-                        def scaleDownCmd = utils.getScaleCmd(fila.NOMBRE, 0)
-                        def scaleUpCmd = utils.getScaleCmd(fila.NOMBRE, 1)
-                        if (fila.RESOURCE_TYPE != 'certificados') {
+                        def scaleDownCmd = utils.getScaleCmd(env.NOMBRE, 0)
+                        def scaleUpCmd = utils.getScaleCmd(env.NOMBRE, 1)
+                        if (env.RESOURCE_TYPE != 'certificados') {
                             // Eliminar variables de entorno relacionadas con RESOURCE_TYPE
-                            def cleanVarsCmd = utils.getCleanVarsCmd(fila.NOMBRE, fila.RESOURCE_TYPE)
+                            def cleanVarsCmd = utils.getCleanVarsCmd(env.NOMBRE, env.RESOURCE_TYPE)
                             sh(script: cleanVarsCmd, label: 'Limpiando variables de entorno relacionadas')
                             // Añadir variables desde el recurso correspondiente
-                            def setFromCmd = utils.getSetFromCmd(fila.NOMBRE, fila.RESOURCE_TYPE)
+                            def setFromCmd = utils.getSetFromCmd(env.NOMBRE, env.RESOURCE_TYPE)
                             sh(script: setFromCmd, label: 'Asignando variables desde el recurso')
                         }
                         // Ejecutar escalado a 0 y luego a 1
@@ -179,8 +179,8 @@ pipeline {
                     def server = utils.getServer(env.AMBIENTE, fila.usage)
                     def ocLoginCmd = utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
                     sh ocLoginCmd
-                    def scaleDownCmd = utils.getScaleCmd(fila.NOMBRE, 0)
-                    def scaleUpCmd = utils.getScaleCmd(fila.NOMBRE, 1)
+                    def scaleDownCmd = utils.getScaleCmd(env.NOMBRE, 0)
+                    def scaleUpCmd = utils.getScaleCmd(env.NOMBRE, 1)
                     sh(script: scaleDownCmd, label: 'Escalado final deployment a 0 réplicas')
                     sh(script: scaleUpCmd, label: 'Escalado final deployment a 1 réplica')
                     def ocLogoutCmd = utils.getOcLogoutCmd()
