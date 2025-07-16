@@ -89,7 +89,6 @@ pipeline {
                         def ocLoginCmd = utils.getOcLoginCmd(server, TOKEN)
                         sh ocLoginCmd
                         def ocCmd = utils.getResourceCmd(RESOURCE_TYPE, NOMBRE, NAMESPACE, yamlFile)
-                        if (!ocCmd) error "Tipo de recurso no soportado: ${RESOURCE_TYPE}"
                         echo "Ejecutando: ${ocCmd}"
                         sh ocCmd
                         def ocLogoutCmd = utils.getOcLogoutCmd()
