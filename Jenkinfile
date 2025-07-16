@@ -50,8 +50,12 @@ pipeline {
                     def appNameIdx = headers.findIndexOf { it.equalsIgnoreCase('appName') }
                     if (appNameIdx == -1) error "No se encontró la columna 'appName' en el CSV"
                     def row = configLines.drop(1)
-                        .collect { it.split(';') }
-                        .find { (it[appNameIdx]?.trim()?.toLowerCase() ?: '') == (NOMBRE?.trim()?.toLowerCase() ?: '') }
+                        .collect { line ->
+                            def values = line.split(';')
+                            // Limpiar cada valor como en el Python: strip y quitar corchetes []
+                            values.collect { v -> v.trim().replaceAll(/^\[|\]$/, '') }
+                        }
+                        .find { (it[appNameIdx]?.trim() ?: '') == (NOMBRE?.trim() ?: '') }
                     if (!row) {
                         echo "DEBUG: Valor de NOMBRE recibido: '${NOMBRE}'"
                         echo "DEBUG: appNameIdx: ${appNameIdx}"
@@ -60,7 +64,7 @@ pipeline {
                     }
                     headers.eachWithIndex { h, idx ->
                         def key = h.trim()
-                        def value = row[idx]?.trim()
+                        def value = row[idx]?.trim()?.replaceAll(/^\[|\]$/, '')
                         env["${key}"] = value
                         if (key.equalsIgnoreCase('usage')) {
                             env.TIPO_ACCESO = value
