@@ -6,7 +6,7 @@ def getOcLogoutCmd = { ->
 }
 // Comandos utilitarios para deployment
 def getCleanVarsCmd = { nombre, resourceType ->
-    return "oc set env deployment/${nombre} --list | grep ${resourceType} | awk '{print  $2}' | while read VR; do oc set env deployment/${nombre} $VR- > /dev/null 2>&1; done"
+    return "oc set env deployment/${nombre} --list | grep ${resourceType} | awk '{print  $2}' | while read VR;do echo \$VR; oc set env deployment/${nombre} \$VR-; done"""
 }
 
 def getSetFromCmd = { nombre, resourceType ->
@@ -19,9 +19,6 @@ def getScaleCmd = { nombre, replicas ->
 def getOcLoginCmd(server, token) {
     return "oc login --insecure-skip-tls-verify --server=${server} --token=${token}"
 }
-def getResourceCmd(resourceType, nombre, namespace, yamlFile) {
-def getBackupCmd(resourceType, nombre, namespace, backupFile) {
-// Archivo de variables y utilidades para pipelines Jenkins
 
 def resourceTypeMap = [
     'certificados': [
@@ -61,9 +58,9 @@ def resourceTypeMap = [
 ]
 
 def serverMap = [
-    'drs'     : { env -> env.SERVER_DRS },
-    'internal': { env -> env.SERVER_INTERNAL },
-    'external': { env -> env.SERVER_EXTERNAL }
+    'drs'     : { -> env.SERVER_DRS },
+    'internal': { -> env.SERVER_INTERNAL },
+    'external': { -> env.SERVER_EXTERNAL }
 ]
 
 def getResourceCmd(resourceType, nombre, namespace, yamlFile) {
@@ -74,16 +71,14 @@ def getBackupCmd(resourceType, nombre, namespace, backupFile) {
     return resourceTypeMap[resourceType]?.getBackupCmd?.call(nombre, namespace, backupFile)
 }
 
-def getServer(ambiente, tipoAcceso, env) {
-    // Si el ambiente es DRS, siempre usar el servidor DRS
+def getServer(ambiente, tipoAcceso) {
+    // Usa la variable global env
     if (ambiente?.toLowerCase() == 'drs') {
-        return serverMap['drs'](env)
+        return serverMap['drs']()
     }
-    // Para dev/uat/prd, usar el tipo de acceso (internal/external)
     def key = tipoAcceso?.toLowerCase()
     if (serverMap.containsKey(key)) {
-        return serverMap[key](env)
+        return serverMap[key]()
     }
-    // Si no coincide, usar internal por defecto
-    return serverMap['internal'](env)
+    return serverMap['internal']()
 }
