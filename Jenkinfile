@@ -52,8 +52,7 @@ pipeline {
                     // Guardar la fila como JSON para los siguientes stages
                     def jsonFila = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(fila))
                     writeFile file: "fila_${nombreProyecto}.json", text: jsonFila
-                    // Cargar utilidades
-                    utils = load 'jenkinsVars.groovy'
+                    // No cargar utils aquí, siempre cargarlo localmente en cada stage
                 }
             }
         }

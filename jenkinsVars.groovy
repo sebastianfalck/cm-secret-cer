@@ -82,3 +82,5 @@ def getServer(ambiente, tipoAcceso) {
     }
     return serverMap['internal']()
 }
+
+return this
