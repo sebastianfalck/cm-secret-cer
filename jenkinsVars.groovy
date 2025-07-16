@@ -19,8 +19,6 @@ def getScaleCmd = { nombre, replicas ->
 def getOcLoginCmd(server, token) {
     return "oc login --insecure-skip-tls-verify --server=${server} --token=${token}"
 }
-def getResourceCmd(resourceType, nombre, namespace, yamlFile) {
-def getBackupCmd(resourceType, nombre, namespace, backupFile) {
 // Archivo de variables y utilidades para pipelines Jenkins
 
 def resourceTypeMap = [
