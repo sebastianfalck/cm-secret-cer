@@ -67,48 +67,45 @@ class JenkinsUtils {
         return map[resourceType]?.deleteCmd?.call(nombre, namespace)
     }
 
+    def extractCmd(resourceType, nombre) {
+        def map = getResourceTypeMap()
+        return map[resourceType]?.extractCmd?.call(nombre)
+    }
+
     private def getResourceTypeMap() {
         return [
             'certificados': [
                 getResourceCmd: { nombre, namespace, yamlFile ->
                     steps.unstash 'FileCer.zip'
-                    steps.sh 'rm -rf certs && mkdir certs' // 🧹 Limpia el directorio certs antes de usarlo
-                    steps.sh 'unzip -j -o FileCer.zip -d certs' // 📦 Extrae archivos sin rutas
+                    steps.sh 'rm -rf certs && mkdir certs'
+                    steps.sh 'unzip -j -o FileCer.zip -d certs'
                     def files = steps.sh(script: "ls certs", returnStdout: true).trim().split("\n")
                     def fromFileArgs = files.collect { f -> "--from-file=certs/${f}" }.join(' ')
                     return "oc create secret generic ${nombre}-file ${fromFileArgs} -n ${namespace} -o yaml --dry-run=client > ${yamlFile}"
                 },
-
-                getBackupCmd: { nombre, namespace, backupFile ->
-                    return "oc get secret ${nombre}-file -n ${namespace} -o yaml > ${backupFile} || true"
-                },
+                getBackupCmd: { nombre, namespace, backupFile -> "oc get secret ${nombre}-file -n ${namespace} -o yaml > ${backupFile} || true" },
                 existsCmd: { nombre, namespace -> "oc get secret ${nombre}-file -n ${namespace}" },
                 getCreateCmd: { nombre -> "oc create secret generic ${nombre}-file" },
                 getApplyCmd: { nombre -> "oc apply -f secret-${nombre}-file.yaml" },
+                extractCmd: { nombre -> "oc extract secret/${nombre}-file --to=-" },
                 deleteCmd: { nombre, namespace -> "oc delete secret ${nombre}-file -n ${namespace}" }
             ],
             'secret': [
-                getResourceCmd: { nombre, namespace, yamlFile ->
-                    return "oc create secret generic ${nombre} --from-env-file=datos.txt -n ${namespace} -o yaml --dry-run=client > ${yamlFile}"
-                },
-                getBackupCmd: { nombre, namespace, backupFile ->
-                    return "oc get secret ${nombre} -n ${namespace} -o yaml > ${backupFile} || true"
-                },
+                getResourceCmd: { nombre, namespace, yamlFile -> "oc create secret generic ${nombre} --from-env-file=datos.txt -n ${namespace} -o yaml --dry-run=client > ${yamlFile}" },
+                getBackupCmd: { nombre, namespace, backupFile -> "oc get secret ${nombre} -n ${namespace} -o yaml > ${backupFile} || true" },
                 existsCmd: { nombre, namespace -> "oc get secret ${nombre} -n ${namespace}" },
                 getCreateCmd: { nombre -> "oc create secret generic ${nombre}" },
                 getApplyCmd: { nombre -> "oc apply -f secret-${nombre}.yaml" },
+                extractCmd: { nombre -> "oc extract secret/${nombre} --to=-" },
                 deleteCmd: { nombre, namespace -> "oc delete secret ${nombre} -n ${namespace}" }
             ],
             'configmap': [
-                getResourceCmd: { nombre, namespace, yamlFile ->
-                    return "oc create configmap ${nombre} --from-env-file=datos.txt -n ${namespace} -o yaml --dry-run=client > ${yamlFile}"
-                },
-                getBackupCmd: { nombre, namespace, backupFile ->
-                    return "oc get configmap ${nombre} -n ${namespace} -o yaml > ${backupFile} || true"
-                },
+                getResourceCmd: { nombre, namespace, yamlFile -> "oc create configmap ${nombre} --from-env-file=datos.txt -n ${namespace} -o yaml --dry-run=client > ${yamlFile}" },
+                getBackupCmd: { nombre, namespace, backupFile -> "oc get configmap ${nombre} -n ${namespace} -o yaml > ${backupFile} || true" },
                 existsCmd: { nombre, namespace -> "oc get configmap ${nombre} -n ${namespace}" },
                 getCreateCmd: { nombre -> "oc create configmap ${nombre}" },
                 getApplyCmd: { nombre -> "oc apply -f configmap-${nombre}.yaml" },
+                extractCmd: { nombre -> "oc extract configmap/${nombre} --to=-" },
                 deleteCmd: { nombre, namespace -> "oc delete configmap ${nombre} -n ${namespace}" }
             ]
         ]
@@ -135,12 +132,27 @@ pipeline {
         stashedFile 'FileCer.zip'
     }
     stages {
-        stage('Checkout Project') {
+        stage('Validar ambiente permitido según rama') {
             steps {
                 script {
-                    dir('project') {
-                        git branch: 'main', url: env.REPO_URL, credentialsId: env.REPO_CREDENTIALS
+                    def branchName = env.GIT_BRANCH?.replaceFirst(/^origin\//, '') ?: 'dev'
+                    def ambientesPorRama = [
+                        'dev' : ['dev', 'uat'],
+                        'main': ['dev', 'uat', 'prd', 'drs']
+                    ]
+                    def permitidos = ambientesPorRama[branchName] ?: ['dev', 'uat']
+                    if (!permitidos.contains(env.AMBIENTE)) {
+                        error "El ambiente '${env.AMBIENTE}' no está permitido en la rama '${branchName}'. Ambientes válidos: ${permitidos.join(', ')}"
                     }
+                    echo "Ambiente '${env.AMBIENTE}' es válido para la rama '${branchName}'"
+                }
+            }
+        }
+
+        stage('Checkout Project') {
+            steps {
+                dir('project') {
+                    git branch: 'main', url: env.REPO_URL, credentialsId: env.REPO_CREDENTIALS
                 }
             }
         }
@@ -159,6 +171,24 @@ pipeline {
                         filaMap
                     }.find { it['appName'] == env.NOMBRE }
                     writeFile file: "fila_${env.NOMBRE}.json", text: groovy.json.JsonOutput.toJson(fila)
+                }
+            }
+        }
+
+        stage('Confirmación de país') {
+            steps {
+                script {
+                    def fila = readJSON file: "fila_${env.NOMBRE}.json"
+                    def paisMicro = fila.country?.toLowerCase()
+                    def partes = env.WORKSPACE.split(/[/\\]+/)
+                    if (partes.size() < 2) {
+                        error "Ruta demasiado corta: ${env.WORKSPACE}"
+                    }
+                    def paisRuta = partes[-2].toLowerCase()
+                    echo "Pais desde ruta: ${paisRuta}, Pais desde CSV: ${paisMicro}"
+                    if (paisMicro != paisRuta) {
+                        error "El microservicio no pertenece a tu país: ${paisMicro} vs ${paisRuta}"
+                    }
                 }
             }
         }
@@ -241,6 +271,7 @@ pipeline {
                 }
             }
         }
+
         stage('Recrear recurso y reiniciar despliegue') {
             steps {
                 script {
@@ -252,6 +283,7 @@ pipeline {
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
                         sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
                         sh utils.getApplyCmd(env.RESOURCE_TYPE, env.NOMBRE)
+                        sh utils.extractCmd(env.RESOURCE_TYPE, env.NOMBRE)
                         sh utils.getScaleCmd(env.NOMBRE, 0)
 
                         if (env.RESOURCE_TYPE != 'certificados') {
@@ -259,8 +291,24 @@ pipeline {
                             sh utils.getSetFromCmd(env.NOMBRE, env.RESOURCE_TYPE)
                         }
 
-                        
                         sh utils.getScaleCmd(env.NOMBRE, 1)
+                        sh utils.getOcLogoutCmd()
+                    }
+                }
+            }
+        }
+
+        stage('Extracción de recurso') {
+            steps {
+                script {
+                    def fila = readJSON file: "fila_${env.NOMBRE}.json"
+                    def utils = new JenkinsUtils(this)
+                    def namespace = fila["NameSpace${env.AMBIENTE.capitalize()}"]
+                    def server = utils.getServer(env.AMBIENTE, fila.usage)
+
+                    wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
+                        sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
+                        sh utils.extractCmd(env.RESOURCE_TYPE, env.NOMBRE)
                         sh utils.getOcLogoutCmd()
                     }
                 }
