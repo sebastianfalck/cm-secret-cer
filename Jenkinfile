@@ -177,6 +177,25 @@ pipeline {
             }
         }
 
+        stage('Generar YAML del recurso') {
+            steps {
+                script {
+                    def fila = readJSON file: "fila_${env.NOMBRE}.json"
+                    def utils = new JenkinsUtils(this)
+                    def namespace = fila["NameSpace${env.AMBIENTE.capitalize()}"]
+                    def server = utils.getServer(env.AMBIENTE, fila.usage)
+                    def yamlFile = env.RESOURCE_TYPE == 'certificados' ? "${env.RESOURCE_TYPE}-${env.NOMBRE}-file.yaml" : "${env.RESOURCE_TYPE}-${env.NOMBRE}.yaml"
+
+                    wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
+                        sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
+                        sh utils.getResourceCmd(env.RESOURCE_TYPE, env.NOMBRE, namespace, yamlFile)
+                        echo "YAML generado: ${yamlFile}"
+                        sh utils.getOcLogoutCmd()
+                    }
+                }
+            }
+        }
+
         stage('Backup') {
             steps {
                 script {
@@ -198,25 +217,6 @@ pipeline {
                 }
             }
         }
-        stage('Generar YAML del recurso') {
-            steps {
-                script {
-                    def fila = readJSON file: "fila_${env.NOMBRE}.json"
-                    def utils = new JenkinsUtils(this)
-                    def namespace = fila["NameSpace${env.AMBIENTE.capitalize()}"]
-                    def server = utils.getServer(env.AMBIENTE, fila.usage)
-                    def yamlFile = env.RESOURCE_TYPE == 'certificados' ? "${env.RESOURCE_TYPE}-${env.NOMBRE}-file.yaml" : "${env.RESOURCE_TYPE}-${env.NOMBRE}.yaml"
-
-                    wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
-                        sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
-                        sh utils.getResourceCmd(env.RESOURCE_TYPE, env.NOMBRE, namespace, yamlFile)
-                        echo "YAML generado: ${yamlFile}"
-                        sh utils.getOcLogoutCmd()
-                    }
-                }
-            }
-        }
-
 
         stage('Eliminar recurso si existe') {
             steps {
@@ -239,7 +239,6 @@ pipeline {
                 }
             }
         }
-
         stage('Recrear recurso y reiniciar despliegue') {
             steps {
                 script {
@@ -247,11 +246,10 @@ pipeline {
                     def utils = new JenkinsUtils(this)
                     def namespace = fila["NameSpace${env.AMBIENTE.capitalize()}"]
                     def server = utils.getServer(env.AMBIENTE, fila.usage)
-                    def yamlFile = env.RESOURCE_TYPE == 'certificados' ? "${env.RESOURCE_TYPE}-${env.NOMBRE}-file.yaml" : "${env.RESOURCE_TYPE}-${env.NOMBRE}.yaml"
 
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
                         sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
-                        sh utils.getResourceCmd(env.RESOURCE_TYPE, env.NOMBRE, namespace, yamlFile)
+                        sh utils.getApplyCmd(env.RESOURCE_TYPE, env.NOMBRE)
                         sh utils.getScaleCmd(env.NOMBRE, 0)
 
                         if (env.RESOURCE_TYPE != 'certificados') {
@@ -259,6 +257,7 @@ pipeline {
                             sh utils.getSetFromCmd(env.NOMBRE, env.RESOURCE_TYPE)
                         }
 
+                        
                         sh utils.getScaleCmd(env.NOMBRE, 1)
                         sh utils.getOcLogoutCmd()
                     }
