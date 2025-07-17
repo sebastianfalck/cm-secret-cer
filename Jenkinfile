@@ -312,6 +312,7 @@ pipeline {
                         sh utils.extractCmd(env.RESOURCE_TYPE, env.NOMBRE)
                         sh utils.getOcLogoutCmd()
                     }
+                    cleanWs()
                 }
             }
         }
