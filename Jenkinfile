@@ -44,7 +44,7 @@ class JenkinsUtils {
 
     def getApplyCmd(resourceType, nombre) {
         def map = getResourceTypeMap()
-        return map[resourceType]?.getCreateCmd?.call(nombre)
+        return map[resourceType]?.getApplyCmd?.call(nombre)
     }
 
     def getBackupCmd(resourceType, nombre, namespace, backupFile) {
@@ -73,10 +73,14 @@ class JenkinsUtils {
                 getResourceCmd: { nombre, namespace, yamlFile ->
                     steps.unstash 'FileCer.zip'
                     steps.sh 'unzip -o FileCer.zip -d certs'
-                    def files = steps.sh(script: "ls certs", returnStdout: true).trim().split("\n")
-                    def fromFileArgs = files.collect { f -> "--from-file=${f}=certs/${f}" }.join(' ')
+                    def files = steps.sh(script: "find certs -type f", returnStdout: true).trim().split("\n")
+                    def fromFileArgs = files.collect { f ->
+                        def key = f.split('/')[-1]
+                        return "--from-file=${key}=${f}"
+                    }.join(' ')
                     return "oc create secret generic ${nombre}-file ${fromFileArgs} -n ${namespace} -o yaml --dry-run=client > ${yamlFile}"
                 },
+
                 getBackupCmd: { nombre, namespace, backupFile ->
                     return "oc get secret ${nombre}-file -n ${namespace} -o yaml > ${backupFile} || true"
                 },
