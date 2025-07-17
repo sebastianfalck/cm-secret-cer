@@ -180,7 +180,7 @@ pipeline {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
                     def paisMicro = fila.country?.toLowerCase()
-                    def partes = env.WORKSPACE.split(/[/\\]+/)
+                    def partes = env.WORKSPACE.split(/[\\\\/]+/)
                     if (partes.size() < 2) {
                         error "Ruta demasiado corta: ${env.WORKSPACE}"
                     }
@@ -236,7 +236,7 @@ pipeline {
                     def fecha = new Date().format("yyyy-MM-dd")
                     def namespace = fila["NameSpace${env.AMBIENTE.capitalize()}"]
                     def server = utils.getServer(env.AMBIENTE, fila.usage)
-                    def backupDir = "backup/${fila.country}/${fila.project}/${env.NOMBRE}/${env.AMBIENTE.toUpperCase()}/${env.RESOURCE_TYPE}"
+                    def backupDir = "/tmp/backup/${fila.country}/${fila.project}/${env.NOMBRE}/${env.AMBIENTE.toUpperCase()}/${env.RESOURCE_TYPE}"
                     def backupFile = "${backupDir}/${env.RESOURCE_TYPE}-${env.NOMBRE}-${fecha}.yaml"
 
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
@@ -249,6 +249,7 @@ pipeline {
                 }
             }
         }
+
 
         stage('Eliminar recurso si existe') {
             steps {
