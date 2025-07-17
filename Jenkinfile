@@ -47,6 +47,11 @@ class JenkinsUtils {
         return map[resourceType]?.getBackupCmd?.call(nombre, namespace, backupFile)
     }
 
+    def getCreateCmd(resourceType, nombre) {
+        def map = getResourceTypeMap()
+        return map[resourceType]?.getCreateCmd?.call(nombre)
+    }
+
     def existsCmd(resourceType, nombre, namespace) {
         def map = getResourceTypeMap()
         return map[resourceType]?.existsCmd?.call(nombre, namespace)
@@ -71,6 +76,7 @@ class JenkinsUtils {
                     return "oc get secret ${nombre}-file -n ${namespace} -o yaml > ${backupFile} || true"
                 },
                 existsCmd: { nombre, namespace -> "oc get secret ${nombre}-file -n ${namespace}" },
+                getCreateCmd: { nombre -> "oc create secret generic ${nombre}-file" },
                 deleteCmd: { nombre, namespace -> "oc delete secret ${nombre}-file -n ${namespace}" }
             ],
             'secret': [
@@ -81,6 +87,7 @@ class JenkinsUtils {
                     return "oc get secret ${nombre} -n ${namespace} -o yaml > ${backupFile} || true"
                 },
                 existsCmd: { nombre, namespace -> "oc get secret ${nombre} -n ${namespace}" },
+                getCreateCmd: { nombre -> "oc create secret generic ${nombre}" },
                 deleteCmd: { nombre, namespace -> "oc delete secret ${nombre} -n ${namespace}" }
             ],
             'configmap': [
@@ -91,6 +98,7 @@ class JenkinsUtils {
                     return "oc get configmap ${nombre} -n ${namespace} -o yaml > ${backupFile} || true"
                 },
                 existsCmd: { nombre, namespace -> "oc get configmap ${nombre} -n ${namespace}" },
+                getCreateCmd: { nombre -> "oc create configmap ${nombre}" },
                 deleteCmd: { nombre, namespace -> "oc delete configmap ${nombre} -n ${namespace}" }
             ]
         ]
@@ -177,6 +185,32 @@ pipeline {
                         sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
                         sh utils.getBackupCmd(env.RESOURCE_TYPE, env.NOMBRE, namespace, backupFile)
                         sh utils.getChmodCmd(backupFile)
+                        sh utils.getOcLogoutCmd()
+                    }
+                }
+            }
+        }
+
+        stage('Verificar o crear recurso si no existe') {
+            steps {
+                script {
+                    def fila = readJSON file: "fila_${env.NOMBRE}.json"
+                    def utils = new JenkinsUtils(this)
+                    def namespace = fila["NameSpace${env.AMBIENTE.capitalize()}"]
+                    def server = utils.getServer(env.AMBIENTE, fila.usage)
+
+                    wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
+                        sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
+
+                        def exists = sh(script: utils.existsCmd(env.RESOURCE_TYPE, env.NOMBRE, namespace), returnStatus: true)
+                        if (exists != 0) {
+                            def createCmd = utils.getCreateCmd(env.RESOURCE_TYPE, env.NOMBRE)
+                            echo "Recurso no existe, creando con comando: ${createCmd}"
+                            sh createCmd
+                        } else {
+                            echo "Recurso ya existe, no se necesita crear."
+                        }
+
                         sh utils.getOcLogoutCmd()
                     }
                 }
