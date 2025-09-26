@@ -126,7 +126,7 @@ pipeline {
     parameters {
         string(name: 'NOMBRE', defaultValue: '', description: 'Nombre del microservicio')
         choice(name: 'AMBIENTE', choices: ['dev', 'uat', 'prd', 'drs'], description: 'Ambiente')
-        stashedFile '${params.NOMBRE}.zip'
+        stashedFile 'MICROSERVICE.zip'
         string(name: 'NAMESPACE', defaultValue: '', description: 'Namespace para validar según el ambiente')
     }
     stages {
@@ -172,13 +172,6 @@ pipeline {
                     }
                     echo "Ambiente '${env.AMBIENTE}' es válido para la rama '${branchName}'"
 
-                    // Validar coincidencia de NOMBRE y stashedFile
-                    def expectedFileName = "${env.NOMBRE}.zip"
-                    if (expectedFileName != "${params.NOMBRE}.zip") {
-                        error "El archivo adjunto (${expectedFileName}) no coincide con el nombre del microservicio (${env.NOMBRE}). Asegúrate de que el archivo se llame ${env.NOMBRE}.zip."
-                    }
-                    echo "Validación exitosa: El archivo adjunto coincide con el nombre del microservicio."
-
                     // Validar Namespace según ambiente
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
                     def namespaceEsperado = fila["NameSpace${env.AMBIENTE.capitalize()}"]
@@ -205,8 +198,8 @@ pipeline {
         stage('Generar datos.txt si aplica') {
             steps {
                 script {
-                    unstash "${params.NOMBRE}.zip"
-                    def zipFile = new File("${params.NOMBRE}.zip")
+                    unstash "MICROSERVICE.zip"
+                    def zipFile = new File("MICROSERVICE.zip")
                     if (!zipFile.exists()) {
                         error "El archivo .zip no se encontró en el stash."
                     }
