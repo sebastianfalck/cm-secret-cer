@@ -38,7 +38,10 @@ class JenkinsUtils {
     // Cleaned Jenkinsfile: single JenkinsUtils class and declarative pipeline
     class JenkinsUtils {
         def steps
-        JenkinsUtils(steps) { this.steps = steps }
+
+        JenkinsUtils(steps) {
+            this.steps = steps
+        }
 
         def getServer(ambiente, tipoAcceso) {
             def serverMap = [
@@ -64,8 +67,7 @@ class JenkinsUtils {
         }
 
         def getCleanVarsCmd(nombre, resourceType) {
-            def cmd = """sudo oc set env deployment/${nombre} --list | grep ${resourceType} | awk '{print  \$2}' | while read VR; do echo \$VR; sudo oc set env deployment/${nombre} \$VR-; done"""
-            return cmd
+            return """sudo oc set env deployment/${nombre} --list | grep ${resourceType} | awk '{print  \$2}' | while read VR; do echo \$VR; sudo oc set env deployment/${nombre} \$VR-; done"""
         }
 
         def getSetFromCmd(nombre, resourceType) {
@@ -122,7 +124,6 @@ class JenkinsUtils {
             return [
                 'certificados': [
                     getResourceCmd: { nombre, namespace, yamlFile ->
-                        // Preferir la carpeta ya extraída 'unzipped/certs' creada en el stage 'Procesar adjuntos'
                         def certsDirPath = 'unzipped/certs'
                         def certsDir = new File(certsDirPath)
                         if (certsDir.exists()) {
@@ -134,7 +135,6 @@ class JenkinsUtils {
                             def fromFileArgs = files.collect { f -> "--from-file=${certsDirPath}/${f}" }.join(' ')
                             return "oc create secret generic ${nombre}-file ${fromFileArgs} -n ${namespace} -o yaml --dry-run=client > ${yamlFile}"
                         } else {
-                            // Fallback: si no existe la extracción previa, realizar unstash y extraer
                             steps.unstash 'var.zip'
                             steps.sh 'rm -rf certs && mkdir certs'
                             steps.sh 'unzip -j -o var.zip -d certs'
@@ -190,8 +190,6 @@ class JenkinsUtils {
         parameters {
             string(name: 'NOMBRE', defaultValue: '', description: 'Nombre del microservicio')
             choice(name: 'AMBIENTE', choices: ['dev', 'uat', 'prd', 'drs'], description: 'Ambiente')
-            // Nota: el contenido para datos.txt ahora se toma desde el adjunto (var.zip) — Configmap.txt y/o Secrets.txt
-            // If you used a custom parameter type for stashedFile before, re-add it here; otherwise we rely on unstash being available
         }
         stages {
             stage('Validar ambiente permitido según rama') {
@@ -258,7 +256,6 @@ class JenkinsUtils {
             stage('Procesar adjuntos') {
                 steps {
                     script {
-                        // Recuperar el zip con los adjuntos
                         unstash 'var.zip'
                         echo "Intentando recuperar el archivo var.zip del stash..."
                         def zipFile = new File('var.zip')
@@ -272,12 +269,10 @@ class JenkinsUtils {
 
                         sh "unzip -o ${zipFile} -d ${unzipDir}"
 
-                        // Detectar tipos de recursos presentes en el adjunto
                         def detected = []
 
                         def certificadosZip = new File(unzipDir, 'Certificados.zip')
                         if (certificadosZip.exists()) {
-                            // extraer certificados para inspección posterior
                             def certsDir = new File(unzipDir, 'certs')
                             certsDir.mkdirs()
                             sh "unzip -o ${certificadosZip} -d ${certsDir}"
@@ -318,10 +313,8 @@ class JenkinsUtils {
                             error "El archivo var.zip no contiene Certificados.zip, Configmap.txt o Secrets.txt."
                         }
 
-                        // Persistir tipos detectados para usarlos en stages posteriores
                         writeFile file: 'detected_types.txt', text: detected.join(',')
                         echo "Tipos detectados: ${detected.join(', ')}"
-
                         echo "Procesamiento del archivo var.zip completado."
                     }
                 }
@@ -370,7 +363,6 @@ class JenkinsUtils {
                         def detected = (readFile('detected_types.txt').trim()) ? readFile('detected_types.txt').trim().split(',') : []
                         def yamlFiles = []
 
-                        // Generar YAMLs según tipos detectados
                         detected.each { type ->
                             if (type == 'certificados') {
                                 def yamlFile = "certificados-${env.NOMBRE}-file.yaml"
@@ -396,7 +388,6 @@ class JenkinsUtils {
                             error "No se generaron YAMLs: ningún tipo reconocido fue detectado."
                         }
 
-                        // Aplicar los YAMLs autenticados
                         wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
                             sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
                             detected.each { type ->
@@ -521,4 +512,4 @@ class JenkinsUtils {
             }
         }
     }
-                                            }
+                            sh utils.getOcLogoutCmd()
