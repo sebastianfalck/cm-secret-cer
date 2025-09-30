@@ -148,6 +148,7 @@ pipeline {
         REPO_URL = ''
         REPO_CREDENTIALS = 'github-credentials'
         NOMBRE = "${params.NOMBRE}"
+        NAMESPACE = "${params.NAMESPACE}"
         AMBIENTE = "${params.AMBIENTE}"
         SERVER_INTERNAL = 'https://internal.openshift.example:6443'
         SERVER_EXTERNAL = 'https://external.openshift.example:6443'
@@ -155,6 +156,7 @@ pipeline {
     }
     parameters {
         string(name: 'NOMBRE', defaultValue: '', description: 'Nombre del microservicio')
+        string(name: 'NAMESPACE', defaultValue: '', description: 'Namespace exacto donde se aplicarán los recursos (debe coincidir con el CSV para el ambiente seleccionado)')
         choice(name: 'AMBIENTE', choices: ['dev', 'uat', 'prd', 'drs'], description: 'Ambiente')
         // Nota: el contenido para datos.txt ahora se toma desde el adjunto (var.zip) — Configmap.txt y/o Secrets.txt
         stashedFile 'var.zip'
@@ -199,6 +201,25 @@ pipeline {
                         filaMap
                     }.find { it['appName'] == env.NOMBRE }
                     writeFile file: "fila_${env.NOMBRE}.json", text: groovy.json.JsonOutput.toJson(fila)
+                }
+            }
+        }
+
+        stage('Validar NAMESPACE ingresado') {
+            steps {
+                script {
+                    def fila = readJSON file: "fila_${env.NOMBRE}.json"
+                    def expectedNamespace = fila["NameSpace${env.AMBIENTE.capitalize()}"]?.trim()
+                    def provided = params.NAMESPACE?.trim()
+                    echo "Namespace esperado desde CSV para ambiente ${env.AMBIENTE}: ${expectedNamespace}"
+                    echo "Namespace proporcionado por el desarrollador: ${provided}"
+                    if (!provided) {
+                        error "Parámetro NAMESPACE no fue provisto. Debe indicar el namespace donde se aplicarán los recursos."
+                    }
+                    if (expectedNamespace != provided) {
+                        error "El NAMESPACE proporcionado ('${provided}') no coincide exactamente con el namespace configurado en el CSV ('${expectedNamespace}') para el ambiente ${env.AMBIENTE}."
+                    }
+                    echo "NAMESPACE validado correctamente."
                 }
             }
         }
