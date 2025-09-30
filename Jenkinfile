@@ -89,9 +89,9 @@ class JenkinsUtils {
                         return "oc create secret generic ${nombre}-file ${fromFileArgs} -n ${namespace} -o yaml --dry-run=client > ${yamlFile}"
                     } else {
                         // Fallback: si no existe la extracción previa, realizar unstash y extraer
-                        steps.unstash 'FileCer.zip'
+                        steps.unstash 'var.zip'
                         steps.sh 'rm -rf certs && mkdir certs'
-                        steps.sh 'unzip -j -o FileCer.zip -d certs'
+                        steps.sh 'unzip -j -o var.zip -d certs'
                         def filesOut = steps.sh(script: "ls certs", returnStdout: true).trim()
                         def files = filesOut ? filesOut.split("\n") : []
                         if (files.size() == 0) {
@@ -145,7 +145,7 @@ pipeline {
         string(name: 'NOMBRE', defaultValue: '', description: 'Nombre del microservicio')
         choice(name: 'AMBIENTE', choices: ['dev', 'uat', 'prd', 'drs'], description: 'Ambiente')
         text(name: 'KEY_VALUE_PAIRS', defaultValue: '', description: 'Contenido para datos.txt')
-        stashedFile 'FileCer.zip'
+        stashedFile 'var.zip'
     }
     stages {
         stage('Validar ambiente permitido según rama') {
@@ -213,11 +213,11 @@ pipeline {
             steps {
                 script {
                     // Recuperar el zip con los adjuntos
-                    unstash 'FileCer.zip'
-                    echo "Intentando recuperar el archivo FileCer.zip del stash..."
-                    def zipFile = new File('FileCer.zip')
+                    unstash 'var.zip'
+                    echo "Intentando recuperar el archivo var.zip del stash..."
+                    def zipFile = new File('var.zip')
                     if (!zipFile.exists()) {
-                        error "El archivo FileCer.zip no se encontró en el stash. Verifique que se haya guardado correctamente."
+                        error "El archivo var.zip no se encontró en el stash. Verifique que se haya guardado correctamente."
                     }
 
                     def unzipDir = new File('unzipped')
@@ -262,14 +262,14 @@ pipeline {
                     }
 
                     if (detected.isEmpty()) {
-                        error "El archivo FileCer.zip no contiene Certificados.zip, Configmap.txt o Secrets.txt."
+                        error "El archivo var.zip no contiene Certificados.zip, Configmap.txt o Secrets.txt."
                     }
 
                     // Persistir tipos detectados para usarlos en stages posteriores
                     writeFile file: 'detected_types.txt', text: detected.join(',')
                     echo "Tipos detectados: ${detected.join(', ')}"
 
-                    echo "Procesamiento del archivo FileCer.zip completado."
+                    echo "Procesamiento del archivo var.zip completado."
                 }
             }
         }

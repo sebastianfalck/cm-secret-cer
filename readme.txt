@@ -20,7 +20,7 @@
   <tr><td><b>AMBIENTE</b></td><td>choice (dev, uat, prd, drs)</td><td>Target OpenShift environment.</td></tr>
   <tr><td><b>RESOURCE_TYPE</b></td><td>choice (configmap, secret, certificados)</td><td>Type of Kubernetes/OpenShift resource to manage.</td></tr>
   <tr><td><b>KEY_VALUE_PAIRS</b></td><td>text</td><td>Content for <code>datos.txt</code> (used for configmap/secret creation).</td></tr>
-  <tr><td><b>FileCer.zip</b></td><td>stashed file</td><td>ZIP file of certificates (only for <code>certificados</code> resource type).</td></tr>
+  <tr><td><b>var.zip</b></td><td>stashed file</td><td>ZIP file of certificates (only for <code>certificados</code> resource type).</td></tr>
 </table>
 
 <h2>🌍 Environment Variables</h2>
@@ -82,7 +82,7 @@
 <ul>
   <li><code>configmap</code>: create, backup, extract, delete, apply configmap from <code>datos.txt</code>.</li>
   <li><code>secret</code>: same operations from <code>datos.txt</code>.</li>
-  <li><code>certificados</code>: unstashes <code>FileCer.zip</code>, extracts cert files, and creates a secret containing files; also supports apply/backup/delete/extract.</li>
+  <li><code>certificados</code>: unstashes <code>var.zip</code>, extracts cert files, and creates a secret containing files; also supports apply/backup/delete/extract.</li>
 </ul>
 
 <hr/>
