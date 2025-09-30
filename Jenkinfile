@@ -42,9 +42,9 @@ class JenkinsUtils {
         return cmd
     }
 
-    def getResourceCmd(resourceType, nombre, namespace, yamlFile) {
+    def getResourceCmd(resourceType, nombre, namespace, yamlFile, extra = null) {
         def map = getResourceTypeMap()
-        def cmd = map[resourceType]?.getResourceCmd?.call(nombre, namespace, yamlFile)
+        def cmd = map[resourceType]?.getResourceCmd?.call(nombre, namespace, yamlFile, extra)
         return cmd?.startsWith('sudo ') ? cmd : "sudo ${cmd}"
     }
 
@@ -87,30 +87,13 @@ class JenkinsUtils {
     private def getResourceTypeMap() {
         return [
             'certificados': [
-                getResourceCmd: { nombre, namespace, yamlFile ->
-                    // Preferir la carpeta ya extraída 'unzipped/certs' creada en el stage 'Procesar adjuntos'
-                    def certsDirPath = 'unzipped/certs'
-                    if (fileExists(certsDirPath)) {
-                        def filesOut = steps.sh(script: "ls -1 ${certsDirPath} || true", returnStdout: true).trim()
-                        def files = filesOut ? filesOut.split("\\n") : []
-                        if (files.size() == 0) {
-                            error "No se encontraron archivos en ${certsDirPath} para crear el secret."
-                        }
-                        def fromFileArgs = files.collect { f -> "--from-file=${certsDirPath}/${f}" }.join(' ')
-                        return "oc create secret generic ${nombre}-file ${fromFileArgs} -n ${namespace} -o yaml --dry-run=client > ${yamlFile}"
-                    } else {
-                        // Fallback: si no existe la extracción previa, realizar unstash y extraer
-                        steps.unstash 'var.zip'
-                        steps.sh 'rm -rf certs && mkdir certs'
-                        steps.sh 'unzip -j -o var.zip -d certs'
-                        def filesOut = steps.sh(script: "ls -1 certs || true", returnStdout: true).trim()
-                        def files = filesOut ? filesOut.split("\\n") : []
-                        if (files.size() == 0) {
-                            error "Certificados.zip está vacío o no contiene archivos válidos."
-                        }
-                        def fromFileArgs = files.collect { f -> "--from-file=certs/${f}" }.join(' ')
-                        return "oc create secret generic ${nombre}-file ${fromFileArgs} -n ${namespace} -o yaml --dry-run=client > ${yamlFile}"
+                getResourceCmd: { nombre, namespace, yamlFile, extra ->
+                    // Esta closure ya no debe invocar pasos; `extra` contiene los --from-file=... si aplica
+                    if (extra && extra.trim()) {
+                        return "oc create secret generic ${nombre}-file ${extra} -n ${namespace} -o yaml --dry-run=client > ${yamlFile}"
                     }
+                    // Si no hay extra, asumimos que no hay archivos y retornamos comando que fallará en runtime
+                    return "echo 'No hay archivos de certificados para ${nombre}'; exit 1"
                 },
                 getBackupCmd: { nombre, namespace, backupFile -> "sudo oc get secret ${nombre}-file -n ${namespace} -o yaml > ${backupFile} || true" },
                 existsCmd: { nombre, namespace -> "sudo oc get secret ${nombre}-file -n ${namespace}" },
@@ -247,11 +230,11 @@ pipeline {
                     // Recuperar el zip con los adjuntos
                     unstash 'var.zip'
                     echo "Intentando recuperar el archivo var.zip del stash..."
-                    if (!fileExists('var.zip')) {
+                    if (!steps.fileExists('var.zip')) {
                         error "El archivo var.zip no se encontró en el stash. Verifique que se haya guardado correctamente."
                     }
 
-                    if (fileExists('unzipped')) { sh 'rm -rf unzipped' }
+                    if (steps.fileExists('unzipped')) { sh 'rm -rf unzipped' }
                     sh 'mkdir -p unzipped'
 
                     sh 'unzip -o var.zip -d unzipped'
@@ -259,9 +242,9 @@ pipeline {
                     // Detectar tipos de recursos presentes en el adjunto
                     def detected = []
 
-                    if (fileExists('unzipped/Certificados.zip')) {
+                    if (steps.fileExists('unzipped/Certificados.zip')) {
                         // extraer certificados para inspección posterior
-                        if (fileExists('unzipped/certs')) { sh 'rm -rf unzipped/certs' }
+                        if (steps.fileExists('unzipped/certs')) { sh 'rm -rf unzipped/certs' }
                         sh 'mkdir -p unzipped/certs'
                         sh 'unzip -o unzipped/Certificados.zip -d unzipped/certs'
                         def filesOut = sh(script: "ls -1 unzipped/certs || true", returnStdout: true).trim()
@@ -274,8 +257,8 @@ pipeline {
                         }
                     }
 
-                    if (fileExists('unzipped/Configmap.txt')) {
-                        def configText = readFile('unzipped/Configmap.txt')
+                    if (steps.fileExists('unzipped/Configmap.txt')) {
+                        def configText = steps.readFile('unzipped/Configmap.txt')
                         if (configText.trim().isEmpty()) {
                             error "ERROR: Configmap.txt está vacío. Abortando la ejecución para evitar aplicar cambios incompletos."
                         } else {
@@ -286,8 +269,8 @@ pipeline {
                         echo "INFO: Configmap.txt no encontrado en el adjunto."
                     }
 
-                    if (fileExists('unzipped/Secrets.txt')) {
-                        def secretsText = readFile('unzipped/Secrets.txt')
+                    if (steps.fileExists('unzipped/Secrets.txt')) {
+                        def secretsText = steps.readFile('unzipped/Secrets.txt')
                         if (secretsText.trim().isEmpty()) {
                             error "ERROR: Secrets.txt está vacío. Abortando la ejecución para evitar aplicar cambios incompletos."
                         } else {
@@ -359,7 +342,32 @@ pipeline {
                         if (type == 'certificados') {
                             def yamlFile = "certificados-${env.NOMBRE}-file.yaml"
                             yamlFiles << yamlFile
-                            sh utils.getResourceCmd('certificados', env.NOMBRE, namespace, yamlFile)
+                            // Preparar argumentos --from-file usando pasos del pipeline
+                            def fromFileArgs = ''
+                            def certsDir = 'unzipped/certs'
+                            def filesOut = sh(script: "ls -1 ${certsDir} 2>/dev/null || true", returnStdout: true).trim()
+                            if (filesOut) {
+                                def files = filesOut.split("\n")
+                                fromFileArgs = files.collect { f -> "--from-file=${certsDir}/${f}" }.join(' ')
+                            } else {
+                                // Intentar extraer desde var.zip como fallback
+                                if (steps.fileExists('var.zip')) {
+                                    sh 'rm -rf certs || true'
+                                    sh 'mkdir -p certs'
+                                    sh 'unzip -j -o var.zip "Certificados.zip" -d certs || true'
+                                    def filesOut2 = sh(script: "ls -1 certs 2>/dev/null || true", returnStdout: true).trim()
+                                    if (filesOut2) {
+                                        def files2 = filesOut2.split("\n")
+                                        fromFileArgs = files2.collect { f -> "--from-file=certs/${f}" }.join(' ')
+                                    }
+                                }
+                            }
+
+                            if (!fromFileArgs) {
+                                error "No se encontraron archivos de certificados para generar el secret YAML."
+                            }
+
+                            sh utils.getResourceCmd('certificados', env.NOMBRE, namespace, yamlFile, fromFileArgs)
                             echo "YAML generado para certificados: ${yamlFile}"
                         } else if (type == 'configmap') {
                             def yamlFile = "configmap-${env.NOMBRE}.yaml"
