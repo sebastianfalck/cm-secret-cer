@@ -19,7 +19,7 @@ El pipeline sigue este flujo general:
 
 ## Requisitos previos
 
-- Jenkins con el plugin Pipeline (declarative). 
+- Jenkins con el plugin Pipeline (declarative).
 - Credenciales configuradas: `github-credentials` para checkout y que los tokens (por ambiente) estén definidos en el CSV (`ProjectsJenkinsCardifCSV.csv`).
 - Plugin `Mask Passwords` (o equivalente) para envolver tokens.
 - Un job que prepare y suba el stash `var.zip` antes de ejecutar este pipeline. El stash debe llamarse `var.zip`.
@@ -41,6 +41,7 @@ El `var.zip` (stash) puede contener una o varias de las siguientes entradas:
 - `Secrets.txt` — archivo con pares clave=valor para generar un Secret (igual que Configmap respecto a `datos.txt`).
 
 Ejemplos:
+
 - Solo certificados: `var.zip` contiene `Certificados.zip`.
 - Configmap + secret: `var.zip` contiene `Configmap.txt` y `Secrets.txt`.
 - All-in-one: `var.zip` contiene `Certificados.zip`, `Configmap.txt` y `Secrets.txt`.
