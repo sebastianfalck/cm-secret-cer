@@ -76,12 +76,30 @@ class JenkinsUtils {
         return [
             'certificados': [
                 getResourceCmd: { nombre, namespace, yamlFile ->
-                    steps.unstash 'FileCer.zip'
-                    steps.sh 'rm -rf certs && mkdir certs'
-                    steps.sh 'unzip -j -o FileCer.zip -d certs'
-                    def files = steps.sh(script: "ls certs", returnStdout: true).trim().split("\n")
-                    def fromFileArgs = files.collect { f -> "--from-file=certs/${f}" }.join(' ')
-                    return "oc create secret generic ${nombre}-file ${fromFileArgs} -n ${namespace} -o yaml --dry-run=client > ${yamlFile}"
+                    // Preferir la carpeta ya extraída 'unzipped/certs' creada en el stage 'Procesar adjuntos'
+                    def certsDirPath = 'unzipped/certs'
+                    def certsDir = new File(certsDirPath)
+                    if (certsDir.exists()) {
+                        def filesOut = steps.sh(script: "ls ${certsDirPath}", returnStdout: true).trim()
+                        def files = filesOut ? filesOut.split("\n") : []
+                        if (files.size() == 0) {
+                            error "No se encontraron archivos en ${certsDirPath} para crear el secret."
+                        }
+                        def fromFileArgs = files.collect { f -> "--from-file=${certsDirPath}/${f}" }.join(' ')
+                        return "oc create secret generic ${nombre}-file ${fromFileArgs} -n ${namespace} -o yaml --dry-run=client > ${yamlFile}"
+                    } else {
+                        // Fallback: si no existe la extracción previa, realizar unstash y extraer
+                        steps.unstash 'FileCer.zip'
+                        steps.sh 'rm -rf certs && mkdir certs'
+                        steps.sh 'unzip -j -o FileCer.zip -d certs'
+                        def filesOut = steps.sh(script: "ls certs", returnStdout: true).trim()
+                        def files = filesOut ? filesOut.split("\n") : []
+                        if (files.size() == 0) {
+                            error "Certificados.zip está vacío o no contiene archivos válidos."
+                        }
+                        def fromFileArgs = files.collect { f -> "--from-file=certs/${f}" }.join(' ')
+                        return "oc create secret generic ${nombre}-file ${fromFileArgs} -n ${namespace} -o yaml --dry-run=client > ${yamlFile}"
+                    }
                 },
                 getBackupCmd: { nombre, namespace, backupFile -> "oc get secret ${nombre}-file -n ${namespace} -o yaml > ${backupFile} || true" },
                 existsCmd: { nombre, namespace -> "oc get secret ${nombre}-file -n ${namespace}" },
@@ -126,10 +144,27 @@ pipeline {
     parameters {
         string(name: 'NOMBRE', defaultValue: '', description: 'Nombre del microservicio')
         choice(name: 'AMBIENTE', choices: ['dev', 'uat', 'prd', 'drs'], description: 'Ambiente')
-        stashedFile 'MICROSERVICE.zip'
-        string(name: 'NAMESPACE', defaultValue: '', description: 'Namespace para validar según el ambiente')
+        text(name: 'KEY_VALUE_PAIRS', defaultValue: '', description: 'Contenido para datos.txt')
+        stashedFile 'FileCer.zip'
     }
     stages {
+        stage('Validar ambiente permitido según rama') {
+            steps {
+                script {
+                    def branchName = env.GIT_BRANCH?.replaceFirst(/^origin\//, '') ?: 'dev'
+                    def ambientesPorRama = [
+                        'dev' : ['dev', 'uat'],
+                        'main': ['dev', 'uat', 'prd', 'drs']
+                    ]
+                    def permitidos = ambientesPorRama[branchName] ?: ['dev', 'uat']
+                    if (!permitidos.contains(env.AMBIENTE)) {
+                        error "El ambiente '${env.AMBIENTE}' no está permitido en la rama '${branchName}'. Ambientes válidos: ${permitidos.join(', ')}"
+                    }
+                    echo "Ambiente '${env.AMBIENTE}' es válido para la rama '${branchName}'"
+                }
+            }
+        }
+
         stage('Checkout Project') {
             steps {
                 dir('project') {
@@ -141,7 +176,6 @@ pipeline {
         stage('Leer configuración CSV') {
             steps {
                 script {
-                    // Leer configuración desde el archivo CSV
                     def configLines = readFile('project/ProjectsJenkinsCardifCSV.csv').readLines().findAll { it.trim() }
                     def headers = configLines[0].split(';').collect { it.trim() }
                     def fila = configLines.drop(1).collect { line ->
@@ -157,30 +191,10 @@ pipeline {
             }
         }
 
-        stage('Validaciones') {
+        stage('Confirmación de país') {
             steps {
                 script {
-                    // Validar ambiente permitido según rama
-                    def branchName = env.GIT_BRANCH?.replaceFirst(/^origin\//, '') ?: 'dev'
-                    def ambientesPorRama = [
-                        'dev' : ['dev', 'uat'],
-                        'main': ['dev', 'uat', 'prd', 'drs']
-                    ]
-                    def permitidos = ambientesPorRama[branchName] ?: ['dev', 'uat']
-                    if (!permitidos.contains(env.AMBIENTE)) {
-                        error "El ambiente '${env.AMBIENTE}' no está permitido en la rama '${branchName}'. Ambientes válidos: ${permitidos.join(', ')}"
-                    }
-                    echo "Ambiente '${env.AMBIENTE}' es válido para la rama '${branchName}'"
-
-                    // Validar Namespace según ambiente
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
-                    def namespaceEsperado = fila["NameSpace${env.AMBIENTE.capitalize()}"]
-                    if (params.NAMESPACE?.trim() != namespaceEsperado) {
-                        error "El namespace proporcionado (${params.NAMESPACE}) no coincide con el esperado (${namespaceEsperado}) para el ambiente ${env.AMBIENTE}."
-                    }
-                    echo "Namespace validado correctamente: ${params.NAMESPACE}"
-
-                    // Confirmación de país
                     def paisMicro = fila.country?.toLowerCase()
                     def partes = env.WORKSPACE.split(/[\\/]+/)
                     if (partes.size() < 2) {
@@ -195,28 +209,35 @@ pipeline {
             }
         }
 
-        stage('Generar datos.txt si aplica') {
+        stage('Procesar adjuntos') {
             steps {
                 script {
-                    unstash "MICROSERVICE.zip"
-                    def zipFile = new File("MICROSERVICE.zip")
+                    // Recuperar el zip con los adjuntos
+                    unstash 'FileCer.zip'
+                    echo "Intentando recuperar el archivo FileCer.zip del stash..."
+                    def zipFile = new File('FileCer.zip')
                     if (!zipFile.exists()) {
-                        error "El archivo .zip no se encontró en el stash."
+                        error "El archivo FileCer.zip no se encontró en el stash. Verifique que se haya guardado correctamente."
                     }
 
                     def unzipDir = new File('unzipped')
+                    if (unzipDir.exists()) { sh "rm -rf ${unzipDir}" }
                     unzipDir.mkdirs()
 
                     sh "unzip -o ${zipFile} -d ${unzipDir}"
 
+                    // Detectar tipos de recursos presentes en el adjunto
+                    def detected = []
+
                     def certificadosZip = new File(unzipDir, 'Certificados.zip')
                     if (certificadosZip.exists()) {
+                        detected << 'certificados'
+                        // extraer certificados para inspección posterior
                         def certsDir = new File(unzipDir, 'certs')
                         certsDir.mkdirs()
                         sh "unzip -o ${certificadosZip} -d ${certsDir}"
-
-                        def certFiles = certsDir.listFiles()
-                        if (certFiles.isEmpty()) {
+                        def certFiles = certsDir.listFiles() ?: []
+                        if (certFiles.size() == 0) {
                             error "Certificados.zip está vacío o no contiene archivos válidos."
                         }
                         echo "Certificados extraídos: ${certFiles.collect { it.name }.join(', ')}"
@@ -227,6 +248,7 @@ pipeline {
                         if (configFile.text.trim().isEmpty()) {
                             error "Configmap.txt está vacío."
                         }
+                        detected << 'configmap'
                         echo "Configmap.txt encontrado y procesado."
                     }
 
@@ -235,19 +257,41 @@ pipeline {
                         if (secretsFile.text.trim().isEmpty()) {
                             error "Secrets.txt está vacío."
                         }
+                        detected << 'secret'
                         echo "Secrets.txt encontrado y procesado."
                     }
 
-                    if (!certificadosZip.exists() && !configFile.exists() && !secretsFile.exists()) {
-                        error "El archivo .zip no contiene Certificados.zip, Configmap.txt o Secrets.txt."
+                    if (detected.isEmpty()) {
+                        error "El archivo FileCer.zip no contiene Certificados.zip, Configmap.txt o Secrets.txt."
                     }
 
-                    echo "Procesamiento del archivo .zip completado."
+                    // Persistir tipos detectados para usarlos en stages posteriores
+                    writeFile file: 'detected_types.txt', text: detected.join(',')
+                    echo "Tipos detectados: ${detected.join(', ')}"
+
+                    echo "Procesamiento del archivo FileCer.zip completado."
                 }
             }
         }
 
-        stage('Generar YAML del recurso') {
+        stage('Generar datos.txt si aplica') {
+            steps {
+                script {
+                    def detected = (readFile('detected_types.txt').trim()) ? readFile('detected_types.txt').trim().split(',') : []
+                    if (detected.contains('configmap') || detected.contains('secret')) {
+                        if (!params.KEY_VALUE_PAIRS?.trim()) {
+                            error "KEY_VALUE_PAIRS no puede estar vacío cuando hay configmap o secret en el adjunto"
+                        }
+                        writeFile file: 'datos.txt', text: params.KEY_VALUE_PAIRS
+                        echo "datos.txt generado para: ${detected.findAll{ it in ['configmap','secret'] }.join(', ')}"
+                    } else {
+                        echo "No se requiere datos.txt: no hay configmap ni secret detectados."
+                    }
+                }
+            }
+        }
+
+        stage('Generar YAMLs de los recursos detectados') {
             steps {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
@@ -255,46 +299,41 @@ pipeline {
                     def namespace = fila["NameSpace${env.AMBIENTE.capitalize()}"]
                     def server = utils.getServer(env.AMBIENTE, fila.usage)
 
+                    def detected = (readFile('detected_types.txt').trim()) ? readFile('detected_types.txt').trim().split(',') : []
                     def yamlFiles = []
 
-                    def certificadosZip = new File('unzipped/Certificados.zip')
-                    if (certificadosZip.exists()) {
-                        def yamlFile = "certificados-${env.NOMBRE}-file.yaml"
-                        yamlFiles << yamlFile
-                        sh utils.getResourceCmd('certificados', env.NOMBRE, namespace, yamlFile)
-                        echo "YAML generado para certificados: ${yamlFile}"
-                    } else {
-                        echo "Certificados.zip no encontrado, omitiendo generación de YAML para certificados."
-                    }
-
-                    def configFile = new File('unzipped/Configmap.txt')
-                    if (configFile.exists()) {
-                        def yamlFile = "configmap-${env.NOMBRE}.yaml"
-                        yamlFiles << yamlFile
-                        sh utils.getResourceCmd('configmap', env.NOMBRE, namespace, yamlFile)
-                        echo "YAML generado para configmap: ${yamlFile}"
-                    } else {
-                        echo "Configmap.txt no encontrado, omitiendo generación de YAML para configmap."
-                    }
-
-                    def secretsFile = new File('unzipped/Secrets.txt')
-                    if (secretsFile.exists()) {
-                        def yamlFile = "secret-${env.NOMBRE}.yaml"
-                        yamlFiles << yamlFile
-                        sh utils.getResourceCmd('secret', env.NOMBRE, namespace, yamlFile)
-                        echo "YAML generado para secret: ${yamlFile}"
-                    } else {
-                        echo "Secrets.txt no encontrado, omitiendo generación de YAML para secret."
+                    // Generar YAMLs según tipos detectados
+                    detected.each { type ->
+                        if (type == 'certificados') {
+                            def yamlFile = "certificados-${env.NOMBRE}-file.yaml"
+                            yamlFiles << yamlFile
+                            sh utils.getResourceCmd('certificados', env.NOMBRE, namespace, yamlFile)
+                            echo "YAML generado para certificados: ${yamlFile}"
+                        } else if (type == 'configmap') {
+                            def yamlFile = "configmap-${env.NOMBRE}.yaml"
+                            yamlFiles << yamlFile
+                            sh utils.getResourceCmd('configmap', env.NOMBRE, namespace, yamlFile)
+                            echo "YAML generado para configmap: ${yamlFile}"
+                        } else if (type == 'secret') {
+                            def yamlFile = "secret-${env.NOMBRE}.yaml"
+                            yamlFiles << yamlFile
+                            sh utils.getResourceCmd('secret', env.NOMBRE, namespace, yamlFile)
+                            echo "YAML generado para secret: ${yamlFile}"
+                        } else {
+                            echo "Tipo desconocido detectado: ${type}, omitiendo"
+                        }
                     }
 
                     if (yamlFiles.isEmpty()) {
-                        echo "No se encontraron archivos válidos en el .zip, no se generaron YAMLs."
+                        error "No se generaron YAMLs: ningún tipo reconocido fue detectado."
                     }
 
+                    // Aplicar los YAMLs autenticados
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
                         sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
                         yamlFiles.each { yamlFile ->
                             echo "Aplicando YAML: ${yamlFile}"
+                            sh "oc apply -f ${yamlFile}"
                         }
                         sh utils.getOcLogoutCmd()
                     }
@@ -302,7 +341,7 @@ pipeline {
             }
         }
 
-        stage('Backup') {
+        stage('Backup de recursos detectados') {
             steps {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
@@ -310,36 +349,18 @@ pipeline {
                     def fecha = new Date().format("yyyy-MM-dd")
                     def namespace = fila["NameSpace${env.AMBIENTE.capitalize()}"]
                     def server = utils.getServer(env.AMBIENTE, fila.usage)
-                    def backupDir = "/tmp/backup/${fila.country}/${fila.project}/${env.NOMBRE}/${env.AMBIENTE.toUpperCase()}/${env.RESOURCE_TYPE}"
-                    def backupFile = "${backupDir}/${env.RESOURCE_TYPE}-${env.NOMBRE}-${fecha}.yaml"
 
-                    wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
-                        sh "mkdir -p ${backupDir}"
-                        sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
-                        sh utils.getBackupCmd(env.RESOURCE_TYPE, env.NOMBRE, namespace, backupFile)
-                        sh utils.getChmodCmd(backupFile)
-                        sh utils.getOcLogoutCmd()
-                    }
-                }
-            }
-        }
-
-
-        stage('Eliminar recurso si existe') {
-            steps {
-                script {
-                    def fila = readJSON file: "fila_${env.NOMBRE}.json"
-                    def utils = new JenkinsUtils(this)
-                    def namespace = fila["NameSpace${env.AMBIENTE.capitalize()}"]
-                    def server = utils.getServer(env.AMBIENTE, fila.usage)
+                    def detected = (readFile('detected_types.txt').trim()) ? readFile('detected_types.txt').trim().split(',') : []
 
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
                         sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
-                        def exists = sh(script: utils.existsCmd(env.RESOURCE_TYPE, env.NOMBRE, namespace), returnStatus: true)
-                        if (exists == 0) {
-                            sh utils.deleteCmd(env.RESOURCE_TYPE, env.NOMBRE, namespace)
-                        } else {
-                            echo "No se encontró recurso para eliminar, continuando..."
+                        detected.each { type ->
+                            def backupDir = "/tmp/backup/${fila.country}/${fila.project}/${env.NOMBRE}/${env.AMBIENTE.toUpperCase()}/${type}"
+                            def backupFile = "${backupDir}/${type}-${env.NOMBRE}-${fecha}.yaml"
+                            sh "mkdir -p ${backupDir}"
+                            sh utils.getBackupCmd(type, env.NOMBRE, namespace, backupFile)
+                            sh utils.getChmodCmd(backupFile)
+                            echo "Backup generado para ${type}: ${backupFile}"
                         }
                         sh utils.getOcLogoutCmd()
                     }
@@ -347,7 +368,7 @@ pipeline {
             }
         }
 
-        stage('Recrear recurso y reiniciar despliegue') {
+        stage('Eliminar recurso si existe (detectados)') {
             steps {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
@@ -355,20 +376,78 @@ pipeline {
                     def namespace = fila["NameSpace${env.AMBIENTE.capitalize()}"]
                     def server = utils.getServer(env.AMBIENTE, fila.usage)
 
+                    def detected = (readFile('detected_types.txt').trim()) ? readFile('detected_types.txt').trim().split(',') : []
+
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
                         sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
-                        sh utils.getApplyCmd(env.RESOURCE_TYPE, env.NOMBRE)
-                        sh utils.extractCmd(env.RESOURCE_TYPE, env.NOMBRE)
-                        sh utils.getScaleCmd(env.NOMBRE, 0)
-
-                        if (env.RESOURCE_TYPE != 'certificados') {
-                            sh utils.getCleanVarsCmd(env.NOMBRE, env.RESOURCE_TYPE)
-                            sh utils.getSetFromCmd(env.NOMBRE, env.RESOURCE_TYPE)
+                        detected.each { type ->
+                            def exists = sh(script: utils.existsCmd(type, env.NOMBRE, namespace), returnStatus: true)
+                            if (exists == 0) {
+                                sh utils.deleteCmd(type, env.NOMBRE, namespace)
+                                echo "Recurso ${type}/${env.NOMBRE} eliminado."
+                            } else {
+                                echo "No se encontró recurso ${type}/${env.NOMBRE} para eliminar."
+                            }
                         }
-
-                        sh utils.getScaleCmd(env.NOMBRE, 1)
                         sh utils.getOcLogoutCmd()
                     }
+                }
+            }
+        }
+
+        stage('Recrear recursos y reiniciar despliegue (detectados)') {
+            steps {
+                script {
+                    def fila = readJSON file: "fila_${env.NOMBRE}.json"
+                    def utils = new JenkinsUtils(this)
+                    def namespace = fila["NameSpace${env.AMBIENTE.capitalize()}"]
+                    def server = utils.getServer(env.AMBIENTE, fila.usage)
+
+                    def detected = (readFile('detected_types.txt').trim()) ? readFile('detected_types.txt').trim().split(',') : []
+
+                    wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
+                        sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
+
+                        detected.each { type ->
+                            sh utils.getApplyCmd(type, env.NOMBRE)
+                            sh utils.extractCmd(type, env.NOMBRE)
+                            sh utils.getScaleCmd(env.NOMBRE, 0)
+
+                            if (type != 'certificados') {
+                                sh utils.getCleanVarsCmd(env.NOMBRE, type)
+                                sh utils.getSetFromCmd(env.NOMBRE, type)
+                            }
+
+                            sh utils.getScaleCmd(env.NOMBRE, 1)
+                            echo "Recreado recurso y reiniciado despliegue para tipo: ${type}"
+                        }
+
+                        sh utils.getOcLogoutCmd()
+                    }
+                }
+            }
+        }
+
+        stage('Extracción de recursos (detectados)') {
+            steps {
+                script {
+                    def fila = readJSON file: "fila_${env.NOMBRE}.json"
+                    def utils = new JenkinsUtils(this)
+                    def namespace = fila["NameSpace${env.AMBIENTE.capitalize()}"]
+                    def server = utils.getServer(env.AMBIENTE, fila.usage)
+
+                    def detected = (readFile('detected_types.txt').trim()) ? readFile('detected_types.txt').trim().split(',') : []
+
+                    wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
+                        sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
+                        detected.each { type ->
+                            sh utils.extractCmd(type, env.NOMBRE)
+                            echo "Extracción ejecutada para ${type}/${env.NOMBRE}"
+                        }
+                        sh utils.getOcLogoutCmd()
+                    }
+
+                    cleanWs()
                 }
             }
         }
