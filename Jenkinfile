@@ -90,9 +90,8 @@ class JenkinsUtils {
                 getResourceCmd: { nombre, namespace, yamlFile ->
                     // Preferir la carpeta ya extraída 'unzipped/certs' creada en el stage 'Procesar adjuntos'
                     def certsDirPath = 'unzipped/certs'
-                    def certsDir = new File(certsDirPath)
-                    if (certsDir.exists()) {
-                        def filesOut = steps.sh(script: "ls ${certsDirPath}", returnStdout: true).trim()
+                    if (fileExists(certsDirPath)) {
+                        def filesOut = steps.sh(script: "ls -1 ${certsDirPath} || true", returnStdout: true).trim()
                         def files = filesOut ? filesOut.split("\\n") : []
                         if (files.size() == 0) {
                             error "No se encontraron archivos en ${certsDirPath} para crear el secret."
@@ -104,7 +103,7 @@ class JenkinsUtils {
                         steps.unstash 'var.zip'
                         steps.sh 'rm -rf certs && mkdir certs'
                         steps.sh 'unzip -j -o var.zip -d certs'
-                        def filesOut = steps.sh(script: "ls certs", returnStdout: true).trim()
+                        def filesOut = steps.sh(script: "ls -1 certs || true", returnStdout: true).trim()
                         def files = filesOut ? filesOut.split("\\n") : []
                         if (files.size() == 0) {
                             error "Certificados.zip está vacío o no contiene archivos válidos."
@@ -248,38 +247,36 @@ pipeline {
                     // Recuperar el zip con los adjuntos
                     unstash 'var.zip'
                     echo "Intentando recuperar el archivo var.zip del stash..."
-                    def zipFile = new File('var.zip')
-                    if (!zipFile.exists()) {
+                    if (!fileExists('var.zip')) {
                         error "El archivo var.zip no se encontró en el stash. Verifique que se haya guardado correctamente."
                     }
 
-                    def unzipDir = new File('unzipped')
-                    if (unzipDir.exists()) { sh "rm -rf ${unzipDir}" }
-                    unzipDir.mkdirs()
+                    if (fileExists('unzipped')) { sh 'rm -rf unzipped' }
+                    sh 'mkdir -p unzipped'
 
-                    sh "unzip -o ${zipFile} -d ${unzipDir}"
+                    sh 'unzip -o var.zip -d unzipped'
 
                     // Detectar tipos de recursos presentes en el adjunto
                     def detected = []
 
-                    def certificadosZip = new File(unzipDir, 'Certificados.zip')
-                    if (certificadosZip.exists()) {
+                    if (fileExists('unzipped/Certificados.zip')) {
                         // extraer certificados para inspección posterior
-                        def certsDir = new File(unzipDir, 'certs')
-                        certsDir.mkdirs()
-                        sh "unzip -o ${certificadosZip} -d ${certsDir}"
-                        def certFiles = certsDir.listFiles() ?: []
+                        if (fileExists('unzipped/certs')) { sh 'rm -rf unzipped/certs' }
+                        sh 'mkdir -p unzipped/certs'
+                        sh 'unzip -o unzipped/Certificados.zip -d unzipped/certs'
+                        def filesOut = sh(script: "ls -1 unzipped/certs || true", returnStdout: true).trim()
+                        def certFiles = filesOut ? filesOut.split("\\n") : []
                         if (certFiles.size() == 0) {
                             echo "WARNING: Certificados.zip está vacío o no contiene archivos válidos. Se omitirá el tipo 'certificados'."
                         } else {
                             detected << 'certificados'
-                            echo "Certificados extraídos: ${certFiles.collect { it.name }.join(', ')}"
+                            echo "Certificados extraídos: ${certFiles.join(', ')}"
                         }
                     }
 
-                    def configFile = new File(unzipDir, 'Configmap.txt')
-                    if (configFile.exists()) {
-                        if (configFile.text.trim().isEmpty()) {
+                    if (fileExists('unzipped/Configmap.txt')) {
+                        def configText = readFile('unzipped/Configmap.txt')
+                        if (configText.trim().isEmpty()) {
                             error "ERROR: Configmap.txt está vacío. Abortando la ejecución para evitar aplicar cambios incompletos."
                         } else {
                             detected << 'configmap'
@@ -289,9 +286,9 @@ pipeline {
                         echo "INFO: Configmap.txt no encontrado en el adjunto."
                     }
 
-                    def secretsFile = new File(unzipDir, 'Secrets.txt')
-                    if (secretsFile.exists()) {
-                        if (secretsFile.text.trim().isEmpty()) {
+                    if (fileExists('unzipped/Secrets.txt')) {
+                        def secretsText = readFile('unzipped/Secrets.txt')
+                        if (secretsText.trim().isEmpty()) {
                             error "ERROR: Secrets.txt está vacío. Abortando la ejecución para evitar aplicar cambios incompletos."
                         } else {
                             detected << 'secret'
