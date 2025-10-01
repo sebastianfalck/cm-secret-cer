@@ -496,21 +496,21 @@ pipeline {
 
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila.get("Token${env.AMBIENTE.capitalize()}")]]]) {
                         sh utils.getOcLoginCmd(server, fila.get("Token${env.AMBIENTE.capitalize()}") )
-
+                        sh utils.getScaleCmd(env.NOMBRE, 0)
                         detected.each { type ->
                             sh utils.getApplyCmd(type, env.NOMBRE)
                             // Extracción deshabilitada por petición del usuario
-                            sh utils.getScaleCmd(env.NOMBRE, 0)
+                            
 
                             if (type != 'certificados') {
                                 sh utils.getCleanVarsCmd(env.NOMBRE, type)
                                 sh utils.getSetFromCmd(env.NOMBRE, type)
                             }
 
-                            sh utils.getScaleCmd(env.NOMBRE, 1)
+                            
                             echo "Recreado recurso y reiniciado despliegue para tipo: ${type}"
                         }
-
+                        sh utils.getScaleCmd(env.NOMBRE, 1)
                         sh utils.getOcLogoutCmd()
                     }
                 }
