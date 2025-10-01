@@ -103,7 +103,12 @@ class JenkinsUtils {
                 deleteCmd: { nombre, namespace -> "sudo oc delete secret ${nombre}-file -n ${namespace}" }
             ],
             'secret': [
-                getResourceCmd: { nombre, namespace, yamlFile -> "sudo oc create secret generic ${nombre} --from-env-file=datos.txt -n ${namespace} -o yaml --dry-run=client > ${yamlFile}" },
+                getResourceCmd: { nombre, namespace, yamlFile, extra ->
+                    if (extra && extra.trim()) {
+                        return "sudo oc create secret generic ${nombre} --from-env-file=${extra} -n ${namespace} -o yaml --dry-run=client > ${yamlFile}"
+                    }
+                    return "echo 'No se proporcionó archivo de secretos para ${nombre}'; exit 1"
+                },
                 getBackupCmd: { nombre, namespace, backupFile -> "sudo oc get secret ${nombre} -n ${namespace} -o yaml > ${backupFile} || true" },
                 existsCmd: { nombre, namespace -> "sudo oc get secret ${nombre} -n ${namespace}" },
                 getCreateCmd: { nombre -> "sudo oc create secret generic ${nombre}" },
@@ -112,7 +117,12 @@ class JenkinsUtils {
                 deleteCmd: { nombre, namespace -> "sudo oc delete secret ${nombre} -n ${namespace}" }
             ],
             'configmap': [
-                getResourceCmd: { nombre, namespace, yamlFile -> "sudo oc create configmap ${nombre} --from-env-file=datos.txt -n ${namespace} -o yaml --dry-run=client > ${yamlFile}" },
+                getResourceCmd: { nombre, namespace, yamlFile, extra ->
+                    if (extra && extra.trim()) {
+                        return "sudo oc create configmap ${nombre} --from-env-file=${extra} -n ${namespace} -o yaml --dry-run=client > ${yamlFile}"
+                    }
+                    return "echo 'No se proporcionó archivo de configmap para ${nombre}'; exit 1"
+                },
                 getBackupCmd: { nombre, namespace, backupFile -> "sudo oc get configmap ${nombre} -n ${namespace} -o yaml > ${backupFile} || true" },
                 existsCmd: { nombre, namespace -> "sudo oc get configmap ${nombre} -n ${namespace}" },
                 getCreateCmd: { nombre -> "sudo oc create configmap ${nombre}" },
@@ -294,37 +304,7 @@ pipeline {
             }
         }
 
-        stage('Generar datos.txt si aplica') {
-            steps {
-                script {
-                    def detected = (readFile('detected_types.txt').trim()) ? readFile('detected_types.txt').trim().split(',') : []
-                    def contenido = []
-                    def unzipDir = new File('unzipped')
-                    if (detected.contains('configmap')) {
-                        def configFile = new File(unzipDir, 'Configmap.txt')
-                        if (!configFile.exists() || configFile.text.trim().isEmpty()) {
-                            echo "WARNING: Configmap.txt faltante o vacío — se omitirá cuando se genere datos.txt"
-                        } else {
-                            contenido << configFile.text
-                        }
-                    }
-                    if (detected.contains('secret')) {
-                        def secretsFile = new File(unzipDir, 'Secrets.txt')
-                        if (!secretsFile.exists() || secretsFile.text.trim().isEmpty()) {
-                            echo "WARNING: Secrets.txt faltante o vacío — se omitirá cuando se genere datos.txt"
-                        } else {
-                            contenido << secretsFile.text
-                        }
-                    }
-                    if (contenido.size() > 0) {
-                        writeFile file: 'datos.txt', text: contenido.join('\n')
-                        echo "datos.txt generado combinando: ${detected.findAll{ it in ['configmap','secret'] }.join(', ')}"
-                    } else {
-                        echo "No se requiere datos.txt: no hay configmap ni secret detectados."
-                    }
-                }
-            }
-        }
+        // Generar datos.txt eliminado: ahora usamos Configmap.txt y Secrets.txt directamente desde el adjunto
 
         stage('Generar YAMLs de los recursos detectados') {
             steps {
@@ -334,58 +314,72 @@ pipeline {
                     def namespace = fila["NameSpace${env.AMBIENTE.capitalize()}"]
                     def server = utils.getServer(env.AMBIENTE, fila.usage)
 
-                    def detected = (readFile('detected_types.txt').trim()) ? readFile('detected_types.txt').trim().split(',') : []
                     def yamlFiles = []
 
-                    // Generar YAMLs según tipos detectados
-                    detected.each { type ->
-                        if (type == 'certificados') {
-                            def yamlFile = "certificados-${env.NOMBRE}-file.yaml"
-                            yamlFiles << yamlFile
-                            // Preparar argumentos --from-file usando pasos del pipeline
-                            def fromFileArgs = ''
-                            def certsDir = 'unzipped/certs'
-                            def filesOut = sh(script: "ls -1 ${certsDir} 2>/dev/null || true", returnStdout: true).trim()
-                            if (filesOut) {
-                                def files = filesOut.split("\n")
-                                fromFileArgs = files.collect { f -> "--from-file=${certsDir}/${f}" }.join(' ')
-                            } else {
-                                // Intentar extraer desde var.zip como fallback
-                                if (steps.fileExists('var.zip')) {
-                                    sh 'rm -rf certs || true'
-                                    sh 'mkdir -p certs'
-                                    sh 'unzip -j -o var.zip "Certificados.zip" -d certs || true'
-                                    def filesOut2 = sh(script: "ls -1 certs 2>/dev/null || true", returnStdout: true).trim()
-                                    if (filesOut2) {
-                                        def files2 = filesOut2.split("\n")
-                                        fromFileArgs = files2.collect { f -> "--from-file=certs/${f}" }.join(' ')
-                                    }
-                                }
+                    // Crear YAML para certificados si existen archivos en unzipped/certs o dentro de Certificados.zip
+                    def certsDir = 'unzipped/certs'
+                    def fromFileArgs = ''
+                    def filesOut = sh(script: "ls -1 ${certsDir} 2>/dev/null || true", returnStdout: true).trim()
+                    if (filesOut) {
+                        def files = filesOut.split("\n")
+                        fromFileArgs = files.collect { f -> "--from-file=${certsDir}/${f}" }.join(' ')
+                    } else {
+                        // Intentar extraer desde var.zip como fallback
+                        if (steps.fileExists('var.zip')) {
+                            sh 'rm -rf certs || true'
+                            sh 'mkdir -p certs'
+                            sh 'unzip -j -o var.zip "Certificados.zip" -d certs || true'
+                            def filesOut2 = sh(script: "ls -1 certs 2>/dev/null || true", returnStdout: true).trim()
+                            if (filesOut2) {
+                                def files2 = filesOut2.split("\n")
+                                fromFileArgs = files2.collect { f -> "--from-file=certs/${f}" }.join(' ')
                             }
-
-                            if (!fromFileArgs) {
-                                error "No se encontraron archivos de certificados para generar el secret YAML."
-                            }
-
-                            sh utils.getResourceCmd('certificados', env.NOMBRE, namespace, yamlFile, fromFileArgs)
-                            echo "YAML generado para certificados: ${yamlFile}"
-                        } else if (type == 'configmap') {
-                            def yamlFile = "configmap-${env.NOMBRE}.yaml"
-                            yamlFiles << yamlFile
-                            sh utils.getResourceCmd('configmap', env.NOMBRE, namespace, yamlFile)
-                            echo "YAML generado para configmap: ${yamlFile}"
-                        } else if (type == 'secret') {
-                            def yamlFile = "secret-${env.NOMBRE}.yaml"
-                            yamlFiles << yamlFile
-                            sh utils.getResourceCmd('secret', env.NOMBRE, namespace, yamlFile)
-                            echo "YAML generado para secret: ${yamlFile}"
-                        } else {
-                            echo "Tipo desconocido detectado: ${type}, omitiendo"
                         }
                     }
 
+                    if (fromFileArgs) {
+                        def yamlFile = "certificados-${env.NOMBRE}-file.yaml"
+                        yamlFiles << yamlFile
+                        sh utils.getResourceCmd('certificados', env.NOMBRE, namespace, yamlFile, fromFileArgs)
+                        echo "YAML generado para certificados: ${yamlFile}"
+                    } else {
+                        echo "No se encontraron certificados para generar YAML."
+                    }
+
+                    // Crear YAML para configmap si existe el archivo
+                    def configPath = 'unzipped/Configmap.txt'
+                    if (steps.fileExists(configPath)) {
+                        def cfgText = steps.readFile(configPath).trim()
+                        if (cfgText) {
+                            def yamlFile = "configmap-${env.NOMBRE}.yaml"
+                            yamlFiles << yamlFile
+                            sh utils.getResourceCmd('configmap', env.NOMBRE, namespace, yamlFile, configPath)
+                            echo "YAML generado para configmap: ${yamlFile}"
+                        } else {
+                            error "Configmap.txt existe pero está vacío: abortando para evitar aplicar cambios incompletos."
+                        }
+                    } else {
+                        echo "Configmap.txt no presente en adjunto: omitiendo configmap."
+                    }
+
+                    // Crear YAML para secret si existe el archivo
+                    def secretPath = 'unzipped/Secrets.txt'
+                    if (steps.fileExists(secretPath)) {
+                        def secText = steps.readFile(secretPath).trim()
+                        if (secText) {
+                            def yamlFile = "secret-${env.NOMBRE}.yaml"
+                            yamlFiles << yamlFile
+                            sh utils.getResourceCmd('secret', env.NOMBRE, namespace, yamlFile, secretPath)
+                            echo "YAML generado para secret: ${yamlFile}"
+                        } else {
+                            error "Secrets.txt existe pero está vacío: abortando para evitar aplicar cambios incompletos."
+                        }
+                    } else {
+                        echo "Secrets.txt no presente en adjunto: omitiendo secret."
+                    }
+
                     if (yamlFiles.isEmpty()) {
-                        error "No se generaron YAMLs: ningún tipo reconocido fue detectado."
+                        error "No se generaron YAMLs: no se detectó ningún recurso válido en el adjunto."
                     }
 
                     // Aplicar los YAMLs autenticados
