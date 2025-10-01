@@ -315,6 +315,7 @@ pipeline {
                     def server = utils.getServer(env.AMBIENTE, fila.usage)
 
                     def yamlFiles = []
+                    def typesProcessed = []
 
                     // Crear YAML para certificados si existen archivos en unzipped/certs o dentro de Certificados.zip
                     def certsDir = 'unzipped/certs'
@@ -340,6 +341,7 @@ pipeline {
                     if (fromFileArgs) {
                         def yamlFile = "certificados-${env.NOMBRE}-file.yaml"
                         yamlFiles << yamlFile
+                        typesProcessed << 'certificados'
                         sh utils.getResourceCmd('certificados', env.NOMBRE, namespace, yamlFile, fromFileArgs)
                         echo "YAML generado para certificados: ${yamlFile}"
                     } else {
@@ -349,14 +351,31 @@ pipeline {
                     // Crear YAML para configmap si existe el archivo
                     def configPath = 'unzipped/Configmap.txt'
                     if (steps.fileExists(configPath)) {
-                        def cfgText = steps.readFile(configPath).trim()
-                        if (cfgText) {
+                        def rawCfg = steps.readFile(configPath)
+                        def cfgLines = rawCfg.split(/\r?\n/).collect { it.trim() }
+                        // Validar formato KEY=VALUE: permitir claves con letras, números, '_', '-', '.' y sin espacios
+                        cfgLines.eachWithIndex { line, idx ->
+                            if (!line || line.startsWith('#')) return
+                            // Validar formato KEY=VALUE y que el VALOR no esté vacío
+                            def m = (line =~ /^([A-Za-z0-9_.-]+)=(.*)$/)
+                            if (!m) {
+                                error "Formato inválido en ${configPath} (línea ${idx + 1}): '${line}'. Debe ser KEY=VALUE con KEY válido"
+                            }
+                            def val = m[0][2]
+                            if (val == null || val.trim().length() == 0) {
+                                error "Valor vacío en ${configPath} (línea ${idx + 1}): '${line}'. Los valores no pueden estar vacíos (KEY=)"
+                            }
+                        }
+                        // Si pasamos validación y hay contenido útil, generamos el YAML
+                        def nonEmpty = cfgLines.findAll { it && !it.startsWith('#') }
+                        if (nonEmpty) {
                             def yamlFile = "configmap-${env.NOMBRE}.yaml"
                             yamlFiles << yamlFile
+                            typesProcessed << 'configmap'
                             sh utils.getResourceCmd('configmap', env.NOMBRE, namespace, yamlFile, configPath)
                             echo "YAML generado para configmap: ${yamlFile}"
                         } else {
-                            error "Configmap.txt existe pero está vacío: abortando para evitar aplicar cambios incompletos."
+                            error "Configmap.txt existe pero no contiene pares clave=valor válidos: abortando."
                         }
                     } else {
                         echo "Configmap.txt no presente en adjunto: omitiendo configmap."
@@ -365,14 +384,30 @@ pipeline {
                     // Crear YAML para secret si existe el archivo
                     def secretPath = 'unzipped/Secrets.txt'
                     if (steps.fileExists(secretPath)) {
-                        def secText = steps.readFile(secretPath).trim()
-                        if (secText) {
+                        def rawSec = steps.readFile(secretPath)
+                        def secLines = rawSec.split(/\r?\n/).collect { it.trim() }
+                        // Validar formato KEY=VALUE
+                        secLines.eachWithIndex { line, idx ->
+                            if (!line || line.startsWith('#')) return
+                            // Validar formato KEY=VALUE y que el VALOR no esté vacío
+                            def m = (line =~ /^([A-Za-z0-9_.-]+)=(.*)$/)
+                            if (!m) {
+                                error "Formato inválido en ${secretPath} (línea ${idx + 1}): '${line}'. Debe ser KEY=VALUE con KEY válido"
+                            }
+                            def val = m[0][2]
+                            if (val == null || val.trim().length() == 0) {
+                                error "Valor vacío en ${secretPath} (línea ${idx + 1}): '${line}'. Los valores no pueden estar vacíos (KEY=)"
+                            }
+                        }
+                        def nonEmptySec = secLines.findAll { it && !it.startsWith('#') }
+                        if (nonEmptySec) {
                             def yamlFile = "secret-${env.NOMBRE}.yaml"
                             yamlFiles << yamlFile
+                            typesProcessed << 'secret'
                             sh utils.getResourceCmd('secret', env.NOMBRE, namespace, yamlFile, secretPath)
                             echo "YAML generado para secret: ${yamlFile}"
                         } else {
-                            error "Secrets.txt existe pero está vacío: abortando para evitar aplicar cambios incompletos."
+                            error "Secrets.txt existe pero no contiene pares clave=valor válidos: abortando."
                         }
                     } else {
                         echo "Secrets.txt no presente en adjunto: omitiendo secret."
@@ -385,7 +420,7 @@ pipeline {
                     // Aplicar los YAMLs autenticados
                     wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
                         sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
-                        detected.each { type ->
+                        typesProcessed.each { type ->
                             echo "Aplicando recursos para tipo: ${type}"
                             sh utils.getApplyCmd(type, env.NOMBRE)
                         }
