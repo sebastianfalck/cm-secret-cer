@@ -201,7 +201,7 @@ pipeline {
             steps {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
-                    def expectedNamespace = fila["NameSpace${env.AMBIENTE.capitalize()}"]?.trim()
+                    def expectedNamespace = fila.get("NameSpace${env.AMBIENTE.capitalize()}")?.trim()
                     def provided = params.NAMESPACE?.trim()
                     echo "Namespace esperado desde CSV para ambiente ${env.AMBIENTE}: ${expectedNamespace}"
                     echo "Namespace proporcionado por el desarrollador: ${provided}"
@@ -220,7 +220,7 @@ pipeline {
             steps {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
-                    def paisMicro = fila.country?.toLowerCase()
+                    def paisMicro = fila.get('country')?.toLowerCase()
                     def partes = env.WORKSPACE.split(/[\\/]+/)
                     if (partes.size() < 2) {
                         error "Ruta demasiado corta: ${env.WORKSPACE}"
@@ -311,8 +311,8 @@ pipeline {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
                     def utils = new JenkinsUtils(this)
-                    def namespace = fila["NameSpace${env.AMBIENTE.capitalize()}"]
-                    def server = utils.getServer(env.AMBIENTE, fila.usage)
+                    def namespace = fila.get("NameSpace${env.AMBIENTE.capitalize()}")
+                    def server = utils.getServer(env.AMBIENTE, fila.get('usage'))
 
                     def yamlFiles = []
                     def typesProcessed = []
@@ -418,8 +418,8 @@ pipeline {
                     }
 
                     // Aplicar los YAMLs autenticados
-                    wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
-                        sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
+                    wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila.get("Token${env.AMBIENTE.capitalize()}")]]]) {
+                        sh utils.getOcLoginCmd(server, fila.get("Token${env.AMBIENTE.capitalize()}") )
                         typesProcessed.each { type ->
                             echo "Aplicando recursos para tipo: ${type}"
                             sh utils.getApplyCmd(type, env.NOMBRE)
@@ -436,13 +436,13 @@ pipeline {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
                     def utils = new JenkinsUtils(this)
                     def fecha = new Date().format("yyyy-MM-dd")
-                    def namespace = fila["NameSpace${env.AMBIENTE.capitalize()}"]
-                    def server = utils.getServer(env.AMBIENTE, fila.usage)
+                    def namespace = fila.get("NameSpace${env.AMBIENTE.capitalize()}")
+                    def server = utils.getServer(env.AMBIENTE, fila.get('usage'))
 
                     def detected = (readFile('detected_types.txt').trim()) ? readFile('detected_types.txt').trim().split(',') : []
 
-                    wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
-                        sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
+                    wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila.get("Token${env.AMBIENTE.capitalize()}")]]]) {
+                        sh utils.getOcLoginCmd(server, fila.get("Token${env.AMBIENTE.capitalize()}") )
                         detected.each { type ->
                             def backupDir = "/tmp/backup/${fila.country}/${fila.project}/${env.NOMBRE}/${env.AMBIENTE.toUpperCase()}/${type}"
                             def backupFile = "${backupDir}/${type}-${env.NOMBRE}-${fecha}.yaml"
@@ -462,13 +462,13 @@ pipeline {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
                     def utils = new JenkinsUtils(this)
-                    def namespace = fila["NameSpace${env.AMBIENTE.capitalize()}"]
-                    def server = utils.getServer(env.AMBIENTE, fila.usage)
+                    def namespace = fila.get("NameSpace${env.AMBIENTE.capitalize()}")
+                    def server = utils.getServer(env.AMBIENTE, fila.get('usage'))
 
                     def detected = (readFile('detected_types.txt').trim()) ? readFile('detected_types.txt').trim().split(',') : []
 
-                    wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
-                        sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
+                    wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila.get("Token${env.AMBIENTE.capitalize()}")]]]) {
+                        sh utils.getOcLoginCmd(server, fila.get("Token${env.AMBIENTE.capitalize()}") )
                         detected.each { type ->
                             def exists = sh(script: utils.existsCmd(type, env.NOMBRE, namespace), returnStatus: true)
                             if (exists == 0) {
@@ -489,17 +489,17 @@ pipeline {
                 script {
                     def fila = readJSON file: "fila_${env.NOMBRE}.json"
                     def utils = new JenkinsUtils(this)
-                    def namespace = fila["NameSpace${env.AMBIENTE.capitalize()}"]
-                    def server = utils.getServer(env.AMBIENTE, fila.usage)
+                    def namespace = fila.get("NameSpace${env.AMBIENTE.capitalize()}")
+                    def server = utils.getServer(env.AMBIENTE, fila.get('usage'))
 
                     def detected = (readFile('detected_types.txt').trim()) ? readFile('detected_types.txt').trim().split(',') : []
 
-                    wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
-                        sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
+                    wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila.get("Token${env.AMBIENTE.capitalize()}")]]]) {
+                        sh utils.getOcLoginCmd(server, fila.get("Token${env.AMBIENTE.capitalize()}") )
 
                         detected.each { type ->
                             sh utils.getApplyCmd(type, env.NOMBRE)
-                            sh utils.extractCmd(type, env.NOMBRE)
+                            // Extracción deshabilitada por petición del usuario
                             sh utils.getScaleCmd(env.NOMBRE, 0)
 
                             if (type != 'certificados') {
@@ -517,28 +517,6 @@ pipeline {
             }
         }
 
-        stage('Extracción de recursos (detectados)') {
-            steps {
-                script {
-                    def fila = readJSON file: "fila_${env.NOMBRE}.json"
-                    def utils = new JenkinsUtils(this)
-                    def namespace = fila["NameSpace${env.AMBIENTE.capitalize()}"]
-                    def server = utils.getServer(env.AMBIENTE, fila.usage)
-
-                    def detected = (readFile('detected_types.txt').trim()) ? readFile('detected_types.txt').trim().split(',') : []
-
-                    wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[var: 'TOKEN', password: fila["Token${env.AMBIENTE.capitalize()}"]]]]) {
-                        sh utils.getOcLoginCmd(server, fila["Token${env.AMBIENTE.capitalize()}"])
-                        detected.each { type ->
-                            sh utils.extractCmd(type, env.NOMBRE)
-                            echo "Extracción ejecutada para ${type}/${env.NOMBRE}"
-                        }
-                        sh utils.getOcLogoutCmd()
-                    }
-
-                    cleanWs()
-                }
-            }
-        }
+        // Extracción de recursos deshabilitada por requerimiento: no se realiza ninguna extracción
     }
 }
