@@ -339,7 +339,7 @@ pipeline {
                     }
 
                     if (fromFileArgs) {
-                        def yamlFile = "certificados-${env.NOMBRE}-file.yaml"
+                        def yamlFile = "secret-${env.NOMBRE}-file.yaml"
                         yamlFiles << yamlFile
                         typesProcessed << 'certificados'
                         sh utils.getResourceCmd('certificados', env.NOMBRE, namespace, yamlFile, fromFileArgs)
